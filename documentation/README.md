@@ -1,0 +1,57 @@
+# VPS Bootstrap
+
+`vps-bootstrap` is a local Bash CLI for taking a fresh VPS from an initial `root@host` password SSH login to a hardened Tailnet-first setup.
+
+The tool:
+
+- Creates a non-root sudo admin user, defaulting to `deploy`.
+- Installs a local OpenSSH public key into the new user.
+- Installs and joins Tailscale interactively.
+- Verifies the new user can SSH over the Tailnet and run sudo before lock-down.
+- Disables root/password SSH only after that verification succeeds.
+- Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default for hosted applications.
+- Supports Ubuntu/Debian through apt and Fedora/RHEL-family hosts through dnf/yum.
+
+## Usage
+
+```bash
+bin/vps-bootstrap --host 203.0.113.10 --hostname app-01
+```
+
+Useful options:
+
+```bash
+bin/vps-bootstrap \
+  --host 203.0.113.10 \
+  --user deploy \
+  --pubkey ~/.ssh/id_ed25519.pub \
+  --identity ~/.ssh/id_ed25519 \
+  --hostname app-01 \
+  --enable-tailscale-ssh
+```
+
+Use `--dry-run` to inspect the phased plan without connecting:
+
+```bash
+bin/vps-bootstrap --host 203.0.113.10 --dry-run
+```
+
+Use `--no-web` or `--web=false` for private-only servers where public HTTP/HTTPS should remain closed.
+
+## Requirements
+
+- Run from your laptop or workstation.
+- The VPS must initially allow `root@host` SSH with password authentication.
+- Your OpenSSH public and private key files must be available locally.
+- The VPS must have outbound internet access for package installation and Tailscale login.
+- You must be able to approve the interactive Tailscale login URL during the prepare phase.
+
+## Safety Model
+
+The script intentionally works in three phases:
+
+1. Prepare as root while keeping temporary public SSH open.
+2. Verify the new admin user can SSH over the Tailnet and run `sudo -n true`.
+3. Harden SSH and remove public SSH only after verification passes.
+
+If phase 1 or 2 fails, root/password SSH is left active so the server can be repaired.

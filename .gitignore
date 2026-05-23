@@ -1,0 +1,10 @@
+.DS_Store
+*.log
+*.tmp
+
+.cache/
+coverage/
+tmp/
+
+.vscode/
+.idea/
