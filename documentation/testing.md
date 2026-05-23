@@ -31,7 +31,10 @@ The tests cover:
 - SSH hardening snippet generation.
 - UFW and firewalld command generation.
 - Remote script support for apt, dnf, yum, Tailscale install, interactive `tailscale up`, and `sshd -t`.
+- Developer CLI install generation for Codex CLI, Claude Code CLI, and GitHub CLI.
+- Agent CLI helper generation with native interactive auth commands only.
 - Dry-run phase ordering that verifies Tailnet login before hardening.
+- Scoped sudo policy generation and the `--full-sudo` escape hatch.
 - Parsing the prepare phase Tailnet IP from remote output.
 - Safe SSH include placement when a distro image lacks `/etc/ssh/sshd_config.d` support in the main config.
 

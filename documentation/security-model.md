@@ -10,15 +10,30 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 - SSH is allowed only on the Tailscale interface.
 - Public TCP 80/443 remain open by default for hosted web applications.
 - Unsolicited inbound traffic is denied by the host firewall.
-- The admin user has passwordless sudo so the local key-based verification and future automation can work without a server-side password.
+- The admin user has scoped passwordless sudo by default so common agentic operations can work without broad root access.
+- Codex CLI, Claude Code CLI, and GitHub CLI are installed by default, but authentication is deferred to the post-setup `vps-agent-auth` helper.
 
 ## Phased Rollback Protection
 
-The first remote phase creates the admin user, installs the key, installs Tailscale, joins the Tailnet, enables baseline services, and configures the firewall with temporary public SSH still allowed.
+The first remote phase creates the admin user, installs the key, installs Tailscale, joins the Tailnet, enables baseline services, installs developer CLIs, and configures the firewall with temporary public SSH still allowed.
 
 The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n true`. Only after that succeeds does the harden phase run over the Tailnet connection.
 
-The harden phase writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf`, validates it with `sshd -t`, reloads SSH, and removes public SSH from UFW or firewalld.
+The prepare phase temporarily grants broad passwordless sudo so the verified Tailnet harden phase can run through `sudo bash -s`. The harden phase then writes the final requested sudo policy: scoped by default, or `NOPASSWD:ALL` only when `--full-sudo` is passed.
+
+The harden phase also writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf`, validates it with `sshd -t`, reloads SSH, and removes public SSH from UFW or firewalld.
+
+## Developer CLI Credentials
+
+`vps-agent-auth` runs the CLIs as the admin user after bootstrap is complete.
+
+The bootstrap script does not accept, upload, or store raw agent CLI tokens. Each CLI handles its own auth state through native commands:
+
+- Codex auth through `codex login --device-auth`.
+- Claude Code auth through `claude auth login`.
+- GitHub CLI auth through `gh auth login --hostname github.com --git-protocol ssh`.
+
+The admin user receives scoped passwordless sudo by default for package, service, log, firewall, deployment, and agent-tool operations. Use `--full-sudo` only when a server intentionally needs broad `NOPASSWD:ALL`.
 
 ## Tailscale SSH
 
