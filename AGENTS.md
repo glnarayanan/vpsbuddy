@@ -8,3 +8,4 @@ Keep this file lean. Load the detailed project docs in `documentation/` when cha
 - `documentation/security-model.md` for the phased hardening model.
 - `documentation/provider-firewall-checklist.md` for provider firewall expectations.
 - `documentation/testing.md` for local checks and test strategy.
+- `documentation/references.md` for upstream install/auth references used by the script.

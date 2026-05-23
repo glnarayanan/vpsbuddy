@@ -84,6 +84,7 @@ test_parse_args_sets_defaults_and_flags() {
     --identity tests/fixtures/identity_fixture \
     --hostname app-vps \
     --enable-tailscale-ssh \
+    --full-sudo \
     --no-web \
     --dry-run
 
@@ -93,6 +94,8 @@ test_parse_args_sets_defaults_and_flags() {
   assert_eq "parse identity" "tests/fixtures/identity_fixture" "$VPS_IDENTITY"
   assert_eq "parse hostname" "app-vps" "$VPS_HOSTNAME"
   assert_eq "parse tailscale ssh flag" "1" "$VPS_ENABLE_TAILSCALE_SSH"
+  assert_eq "parse agent cli install default" "1" "$VPS_INSTALL_AGENT_CLIS"
+  assert_eq "parse full sudo flag" "1" "$VPS_FULL_SUDO"
   assert_eq "parse no web flag" "0" "$VPS_WEB"
   assert_eq "parse dry-run flag" "1" "$VPS_DRY_RUN"
 }
@@ -102,6 +105,28 @@ test_parse_args_supports_web_equals_false() {
   parse_args --host example.test --web=false
 
   assert_eq "web=false disables public web" "0" "$VPS_WEB"
+}
+
+test_parse_args_supports_skipping_agent_clis() {
+  reset_config
+  parse_args --host example.test --skip-agent-clis
+
+  assert_eq "skip agent clis disables install" "0" "$VPS_INSTALL_AGENT_CLIS"
+}
+
+test_parse_args_rejects_removed_agent_auth_options() {
+  reset_config
+  if parse_args --host example.test --agent-auth interactive >/tmp/vps-bootstrap-test.out 2>/tmp/vps-bootstrap-test.err; then
+    fail "removed --agent-auth should fail"
+    return
+  fi
+
+  if parse_args --host example.test --agent-auth-env-file tests/fixtures/agent-cli.env >/tmp/vps-bootstrap-test.out 2>/tmp/vps-bootstrap-test.err; then
+    fail "removed --agent-auth-env-file should fail"
+    return
+  fi
+
+  pass "removed agent auth options should fail"
 }
 
 test_identity_path_defaults_from_public_key() {
@@ -161,6 +186,75 @@ test_remote_script_contains_supported_distros_and_tailscale_flow() {
   assert_contains "remote script validates sshd" "$script" "sshd -t"
 }
 
+test_remote_script_installs_agent_clis_and_supports_auth_modes() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "remote script installs codex cli" "$script" "npm install -g @openai/codex"
+  assert_contains "remote script installs claude apt repo" "$script" "https://downloads.claude.ai/claude-code/apt/stable"
+  assert_contains "remote script installs claude rpm repo" "$script" "https://downloads.claude.ai/claude-code/rpm/stable"
+  assert_contains "remote script installs github cli apt repo" "$script" "https://cli.github.com/packages stable main"
+  assert_contains "remote script installs github cli rpm repo" "$script" "https://cli.github.com/packages/rpm/gh-cli.repo"
+  assert_contains "remote script records codex version" "$script" "VPS_BOOTSTRAP_CODEX_VERSION="
+  assert_contains "remote script records claude version" "$script" "VPS_BOOTSTRAP_CLAUDE_VERSION="
+  assert_contains "remote script records github cli version" "$script" "VPS_BOOTSTRAP_GH_VERSION="
+}
+
+test_agent_auth_helper_uses_native_auth_only() {
+  local helper
+  helper="$(generate_agent_auth_helper_script)"
+
+  assert_contains "helper supports all mode" "$helper" "--all"
+  assert_contains "helper supports status mode" "$helper" "--status"
+  assert_contains "helper uses codex device auth" "$helper" "codex login --device-auth"
+  assert_contains "helper uses claude native auth" "$helper" "claude auth login"
+  assert_contains "helper uses github native auth" "$helper" "gh auth login --hostname github.com --git-protocol ssh"
+  assert_contains "helper checks codex status" "$helper" "codex login status"
+  assert_contains "helper checks claude status" "$helper" "claude auth status"
+  assert_contains "helper checks github status" "$helper" "gh auth status --hostname github.com"
+  assert_not_contains "helper does not use codex api key login" "$helper" "codex login --with-api-key"
+  assert_not_contains "helper does not use token login" "$helper" "gh auth login --with-token"
+  assert_not_contains "helper does not reference auth env file" "$helper" "agent-cli.env"
+  assert_not_contains "helper does not write claude settings" "$helper" ".claude/settings.json"
+}
+
+test_remote_script_installs_agent_auth_helper() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "remote script installs auth helper" "$script" "/usr/local/bin/vps-agent-auth"
+  assert_contains "remote script makes auth helper executable" "$script" "chmod 755 /usr/local/bin/vps-agent-auth"
+  assert_not_contains "remote script does not upload auth env" "$script" "agent-cli.env"
+  assert_not_contains "remote script does not store headless tokens" "$script" "ANTHROPIC_API_KEY"
+}
+
+test_sudoers_policy_is_scoped_by_default() {
+  local policy
+  policy="$(generate_sudoers_policy "deploy" "0")"
+
+  assert_contains "scoped sudo allows apt" "$policy" "/usr/bin/apt-get"
+  assert_contains "scoped sudo allows systemctl" "$policy" "/usr/bin/systemctl"
+  assert_contains "scoped sudo allows journalctl" "$policy" "/usr/bin/journalctl"
+  assert_contains "scoped sudo allows npm global installs" "$policy" "/usr/bin/npm"
+  assert_not_contains "scoped sudo avoids all access" "$policy" "NOPASSWD:ALL"
+}
+
+test_sudoers_policy_supports_full_sudo_escape_hatch() {
+  local policy
+  policy="$(generate_sudoers_policy "deploy" "1")"
+
+  assert_contains "full sudo preserves nopasswd all" "$policy" "deploy ALL=(ALL) NOPASSWD:ALL"
+}
+
+test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "remote script grants temporary bootstrap sudo" "$script" "write_sudoers_policy \"1\""
+  assert_contains "remote script writes final requested sudo policy" "$script" 'write_sudoers_policy "$full_sudo"'
+  assert_order "remote script final sudo policy happens during harden" "$script" "write_sshd_hardening" 'write_sudoers_policy "$full_sudo"'
+}
+
 test_dry_run_prints_rollback_safe_phase_ordering() {
   local output
   reset_config
@@ -175,6 +269,9 @@ test_dry_run_prints_rollback_safe_phase_ordering() {
   assert_contains "dry-run announces no remote mutation" "$output" "Dry run: no SSH connections will be opened."
   assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare as root"
   assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
+  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: install"
+  assert_contains "dry-run includes post setup auth command" "$output" "vps-agent-auth --all"
+  assert_contains "dry-run includes post setup status command" "$output" "vps-agent-auth --status"
   assert_contains "dry-run includes harden phase" "$output" "Phase 3: harden over Tailnet"
   assert_order "dry-run verifies before hardening" "$output" "Phase 2: verify Tailnet key login" "Phase 3: harden over Tailnet"
   assert_order "dry-run prepares before verification" "$output" "Phase 1: prepare as root" "Phase 2: verify Tailnet key login"
@@ -226,11 +323,19 @@ test_remote_script_prepends_missing_sshd_include() {
 
 test_parse_args_sets_defaults_and_flags
 test_parse_args_supports_web_equals_false
+test_parse_args_supports_skipping_agent_clis
+test_parse_args_rejects_removed_agent_auth_options
 test_identity_path_defaults_from_public_key
 test_hardening_config_contains_required_directives
 test_ufw_rules_keep_public_ssh_until_harden_phase
 test_firewalld_rules_remove_public_ssh_and_keep_web
 test_remote_script_contains_supported_distros_and_tailscale_flow
+test_remote_script_installs_agent_clis_and_supports_auth_modes
+test_agent_auth_helper_uses_native_auth_only
+test_remote_script_installs_agent_auth_helper
+test_sudoers_policy_is_scoped_by_default
+test_sudoers_policy_supports_full_sudo_escape_hatch
+test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy
 test_dry_run_prints_rollback_safe_phase_ordering
 test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip
 test_parse_prepare_output_extracts_tailnet_ip

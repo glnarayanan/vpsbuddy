@@ -7,6 +7,8 @@ reset_config() {
   VPS_IDENTITY=""
   VPS_HOSTNAME=""
   VPS_ENABLE_TAILSCALE_SSH="0"
+  VPS_INSTALL_AGENT_CLIS="1"
+  VPS_FULL_SUDO="0"
   VPS_WEB="1"
   VPS_DRY_RUN="0"
   VPS_SHOW_HELP="0"
@@ -30,6 +32,9 @@ Options:
   --identity <path>             Private key used to verify Tailnet login. Default: pubkey without .pub.
   --hostname <name>             Hostname to set on the server and use for Tailscale.
   --enable-tailscale-ssh        Enable Tailscale SSH after joining the Tailnet.
+  --install-agent-clis          Install Codex, Claude Code, and GitHub CLIs. Default.
+  --skip-agent-clis             Skip Codex, Claude Code, and GitHub CLI installation.
+  --full-sudo                   Use NOPASSWD:ALL instead of scoped passwordless sudo.
   --web                         Keep public TCP 80/443 open. Default.
   --web=false                   Disable public TCP 80/443.
   --no-web                      Disable public TCP 80/443.
@@ -158,6 +163,18 @@ parse_args() {
         VPS_ENABLE_TAILSCALE_SSH="1"
         shift
         ;;
+      --install-agent-clis)
+        VPS_INSTALL_AGENT_CLIS="1"
+        shift
+        ;;
+      --skip-agent-clis | --no-agent-clis)
+        VPS_INSTALL_AGENT_CLIS="0"
+        shift
+        ;;
+      --full-sudo)
+        VPS_FULL_SUDO="1"
+        shift
+        ;;
       --web)
         VPS_WEB="1"
         shift
@@ -268,6 +285,135 @@ X11Forwarding no
 SSHD_CONFIG
 }
 
+generate_sudoers_policy() {
+  local admin_user="$1"
+  local full_sudo="$2"
+
+  if [[ "$full_sudo" == "1" ]]; then
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$admin_user"
+    return 0
+  fi
+
+  cat <<SUDOERS_POLICY
+# Managed by vps-bootstrap. Scoped passwordless sudo for agentic operations.
+Cmnd_Alias VPS_PKG = /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dnf, /usr/bin/yum
+Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
+Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
+Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
+Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
+Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/claude, /usr/local/bin/claude, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
+$admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
+SUDOERS_POLICY
+}
+
+generate_agent_auth_helper_script() {
+  cat <<'AGENT_AUTH_HELPER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  vps-agent-auth [--all] [--status] [--codex] [--claude] [--github]
+
+Runs native interactive authentication for installed agent CLIs. No tokens are
+accepted, copied, or stored by this helper; each CLI manages its own auth state.
+USAGE
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+status_codex() {
+  have codex && codex login status
+}
+
+status_claude() {
+  have claude && claude auth status --text
+}
+
+status_github() {
+  have gh && gh auth status --hostname github.com
+}
+
+auth_codex() {
+  if ! have codex; then
+    printf 'codex is not installed\n' >&2
+    return 1
+  fi
+
+  codex login --device-auth
+}
+
+auth_claude() {
+  if ! have claude; then
+    printf 'claude is not installed\n' >&2
+    return 1
+  fi
+
+  claude auth login
+}
+
+auth_github() {
+  if ! have gh; then
+    printf 'gh is not installed\n' >&2
+    return 1
+  fi
+
+  gh auth login --hostname github.com --git-protocol ssh
+}
+
+run_status() {
+  printf '\n== Codex ==\n'
+  status_codex || true
+  printf '\n== Claude Code ==\n'
+  status_claude || true
+  printf '\n== GitHub CLI ==\n'
+  status_github || true
+}
+
+run_all() {
+  auth_codex
+  auth_claude
+  auth_github
+}
+
+if [[ "$#" -eq 0 ]]; then
+  run_all
+  exit 0
+fi
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --all)
+      run_all
+      ;;
+    --status)
+      run_status
+      ;;
+    --codex)
+      auth_codex
+      ;;
+    --claude)
+      auth_claude
+      ;;
+    --github)
+      auth_github
+      ;;
+    -h | --help)
+      usage
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+AGENT_AUTH_HELPER
+}
+
 generate_ufw_rules() {
   local phase="$1"
   local web_enabled="$2"
@@ -348,6 +494,8 @@ public_key="${3:?public key required}"
 requested_hostname="${4:-}"
 enable_tailscale_ssh="${5:-0}"
 web_enabled="${6:-1}"
+install_agent_clis="${7:-1}"
+full_sudo="${8:-0}"
 
 OS_ID=""
 OS_LIKE=""
@@ -477,19 +625,19 @@ install_required_packages() {
   if [[ "$PKG_BACKEND" == "apt" ]]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y sudo ca-certificates curl gnupg openssh-server ufw unattended-upgrades
+    apt-get install -y sudo ca-certificates curl gnupg git openssh-server ufw unattended-upgrades
     return 0
   fi
 
   if [[ "$PKG_BACKEND" == "dnf" ]]; then
     dnf makecache -y
-    dnf install -y sudo ca-certificates curl openssh-server firewalld
+    dnf install -y sudo ca-certificates curl git openssh-server firewalld
     install_optional_package dnf-automatic || true
     return 0
   fi
 
   yum makecache -y
-  yum install -y sudo ca-certificates curl openssh-server firewalld
+  yum install -y sudo ca-certificates curl git openssh-server firewalld
   install_optional_package dnf-automatic || true
 }
 
@@ -550,8 +698,260 @@ install_ban_service() {
   warn "neither fail2ban nor sshguard is available from configured repositories"
 }
 
+generate_sudoers_policy_remote() {
+  local policy_full="${1:-$full_sudo}"
+
+  if [[ "$policy_full" == "1" ]]; then
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$admin_user"
+    return 0
+  fi
+
+  cat <<SUDOERS_POLICY
+# Managed by vps-bootstrap. Scoped passwordless sudo for agentic operations.
+Cmnd_Alias VPS_PKG = /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dnf, /usr/bin/yum
+Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
+Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
+Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
+Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
+Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/claude, /usr/local/bin/claude, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
+$admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
+SUDOERS_POLICY
+}
+
+write_sudoers_policy() {
+  local policy_full="${1:-$full_sudo}"
+  local sudoers_file
+
+  sudoers_file="/etc/sudoers.d/90-vps-bootstrap-$admin_user"
+  generate_sudoers_policy_remote "$policy_full" >"$sudoers_file"
+  chmod 440 "$sudoers_file"
+  visudo -cf "$sudoers_file" >/dev/null
+}
+
+install_node_runtime() {
+  if command_exists npm; then
+    return 0
+  fi
+
+  log "installing Node.js and npm for Codex CLI"
+
+  if [[ "$PKG_BACKEND" == "apt" ]]; then
+    apt-get install -y nodejs npm
+    return 0
+  fi
+
+  "$PKG_BIN" install -y nodejs npm
+}
+
+install_codex_cli() {
+  install_node_runtime
+
+  if command_exists codex; then
+    log "Codex CLI is already installed"
+    return 0
+  fi
+
+  log "installing Codex CLI with npm"
+  npm install -g @openai/codex
+  codex --version >/dev/null
+}
+
+install_claude_code_cli() {
+  if command_exists claude; then
+    log "Claude Code CLI is already installed"
+    return 0
+  fi
+
+  log "installing Claude Code CLI"
+
+  if [[ "$PKG_BACKEND" == "apt" ]]; then
+    install -d -m 0755 /etc/apt/keyrings
+    curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o /etc/apt/keyrings/claude-code.asc
+    gpg --show-keys /etc/apt/keyrings/claude-code.asc | grep -q '31DD DE24 DDFA B679 F42D  7BD2 BAA9 29FF 1A7E CACE' ||
+      warn "Claude Code signing key fingerprint could not be verified from gpg output"
+    printf '%s\n' \
+      'deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main' \
+      >/etc/apt/sources.list.d/claude-code.list
+    apt-get update
+    apt-get install -y claude-code
+    claude --version >/dev/null
+    return 0
+  fi
+
+  cat >/etc/yum.repos.d/claude-code.repo <<'CLAUDE_REPO'
+[claude-code]
+name=Claude Code
+baseurl=https://downloads.claude.ai/claude-code/rpm/stable
+enabled=1
+gpgcheck=1
+gpgkey=https://downloads.claude.ai/keys/claude-code.asc
+CLAUDE_REPO
+
+  "$PKG_BIN" install -y claude-code
+  claude --version >/dev/null
+}
+
+install_github_cli() {
+  if command_exists gh; then
+    log "GitHub CLI is already installed"
+    return 0
+  fi
+
+  log "installing GitHub CLI"
+
+  if [[ "$PKG_BACKEND" == "apt" ]]; then
+    install -d -m 0755 /etc/apt/keyrings
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    install -d -m 0755 /etc/apt/sources.list.d
+    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
+      "$(dpkg --print-architecture)" \
+      >/etc/apt/sources.list.d/github-cli.list
+    apt-get update
+    apt-get install -y gh
+    gh --version >/dev/null
+    return 0
+  fi
+
+  curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo -o /etc/yum.repos.d/gh-cli.repo
+  "$PKG_BIN" install -y gh
+  gh --version >/dev/null
+}
+
+install_agent_clis_if_requested() {
+  if [[ "$install_agent_clis" != "1" ]]; then
+    log "developer CLI installation skipped"
+    return 0
+  fi
+
+  install_codex_cli
+  install_claude_code_cli
+  install_github_cli
+  install_agent_auth_helper
+  print_agent_cli_versions
+}
+
+install_agent_auth_helper() {
+  log "installing /usr/local/bin/vps-agent-auth"
+
+  cat >/usr/local/bin/vps-agent-auth <<'AGENT_AUTH_HELPER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  vps-agent-auth [--all] [--status] [--codex] [--claude] [--github]
+
+Runs native interactive authentication for installed agent CLIs. No tokens are
+accepted, copied, or stored by this helper; each CLI manages its own auth state.
+USAGE
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+status_codex() {
+  have codex && codex login status
+}
+
+status_claude() {
+  have claude && claude auth status --text
+}
+
+status_github() {
+  have gh && gh auth status --hostname github.com
+}
+
+auth_codex() {
+  if ! have codex; then
+    printf 'codex is not installed\n' >&2
+    return 1
+  fi
+
+  codex login --device-auth
+}
+
+auth_claude() {
+  if ! have claude; then
+    printf 'claude is not installed\n' >&2
+    return 1
+  fi
+
+  claude auth login
+}
+
+auth_github() {
+  if ! have gh; then
+    printf 'gh is not installed\n' >&2
+    return 1
+  fi
+
+  gh auth login --hostname github.com --git-protocol ssh
+}
+
+run_status() {
+  printf '\n== Codex ==\n'
+  status_codex || true
+  printf '\n== Claude Code ==\n'
+  status_claude || true
+  printf '\n== GitHub CLI ==\n'
+  status_github || true
+}
+
+run_all() {
+  auth_codex
+  auth_claude
+  auth_github
+}
+
+if [[ "$#" -eq 0 ]]; then
+  run_all
+  exit 0
+fi
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --all)
+      run_all
+      ;;
+    --status)
+      run_status
+      ;;
+    --codex)
+      auth_codex
+      ;;
+    --claude)
+      auth_claude
+      ;;
+    --github)
+      auth_github
+      ;;
+    -h | --help)
+      usage
+      ;;
+    *)
+      usage >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+AGENT_AUTH_HELPER
+
+  chmod 755 /usr/local/bin/vps-agent-auth
+}
+
+print_agent_cli_versions() {
+  printf 'VPS_BOOTSTRAP_CODEX_VERSION=%s\n' "$(codex --version 2>/dev/null | head -n 1 || true)"
+  printf 'VPS_BOOTSTRAP_CLAUDE_VERSION=%s\n' "$(claude --version 2>/dev/null | head -n 1 || true)"
+  printf 'VPS_BOOTSTRAP_GH_VERSION=%s\n' "$(gh --version 2>/dev/null | head -n 1 || true)"
+}
+
 ensure_admin_user() {
-  local home_dir sudoers_file
+  local home_dir
 
   if ! getent passwd "$admin_user" >/dev/null 2>&1; then
     log "creating admin user: $admin_user"
@@ -575,10 +975,9 @@ ensure_admin_user() {
   chown "$admin_user:$admin_user" "$home_dir/.ssh/authorized_keys"
   chmod 600 "$home_dir/.ssh/authorized_keys"
 
-  sudoers_file="/etc/sudoers.d/90-vps-bootstrap-$admin_user"
-  printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$admin_user" >"$sudoers_file"
-  chmod 440 "$sudoers_file"
-  visudo -cf "$sudoers_file" >/dev/null
+  # The harden phase runs through `sudo bash -s` after local key verification.
+  # It rewrites this temporary broad policy to the requested final policy.
+  write_sudoers_policy "1"
 }
 
 set_requested_hostname() {
@@ -769,6 +1168,7 @@ run_prepare() {
   install_ban_service
   ensure_admin_user
   set_requested_hostname
+  install_agent_clis_if_requested
   ensure_tailscale_connected
   enable_tailscale_ssh_if_requested
   configure_firewall prepare
@@ -787,6 +1187,7 @@ run_harden() {
   ensure_tailscale_connected
   configure_firewall harden
   write_sshd_hardening
+  write_sudoers_policy "$full_sudo"
 
   printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
   printf 'VPS_BOOTSTRAP_FIREWALL=%s\n' "$FIREWALL_BACKEND"
@@ -810,7 +1211,7 @@ REMOTE_SCRIPT
 build_root_prepare_command() {
   local host="$1"
 
-  printf 'ssh -tt -o StrictHostKeyChecking=accept-new %s %s -- prepare <admin-user> <public-key> <hostname> <tailscale-ssh> <web>' \
+  printf 'ssh -tt -o StrictHostKeyChecking=accept-new %s %s -- prepare <admin-user> <public-key> <hostname> <tailscale-ssh> <web> <install-agent-clis> <full-sudo>' \
     "$(shell_quote "root@$host")" \
     "$(shell_quote "bash -s")"
 }
@@ -831,7 +1232,7 @@ build_admin_harden_command() {
   local tailnet_ip="$2"
   local identity="$3"
 
-  printf 'ssh -tt -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new %s %s -- harden <admin-user> <public-key> <hostname> <tailscale-ssh> <web>' \
+  printf 'ssh -tt -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new %s %s -- harden <admin-user> <public-key> <hostname> <tailscale-ssh> <web> <install-agent-clis> <full-sudo>' \
     "$(shell_quote "$identity")" \
     "$(shell_quote "$admin_user@$tailnet_ip")" \
     "$(shell_quote "sudo bash -s")"
@@ -856,7 +1257,9 @@ run_remote_prepare() {
       "$public_key" \
       "$VPS_HOSTNAME" \
       "$VPS_ENABLE_TAILSCALE_SSH" \
-      "$VPS_WEB"
+      "$VPS_WEB" \
+      "$VPS_INSTALL_AGENT_CLIS" \
+      "$VPS_FULL_SUDO"
 }
 
 verify_admin_login() {
@@ -889,7 +1292,9 @@ run_remote_harden() {
       "$public_key" \
       "$VPS_HOSTNAME" \
       "$VPS_ENABLE_TAILSCALE_SSH" \
-      "$VPS_WEB"
+      "$VPS_WEB" \
+      "$VPS_INSTALL_AGENT_CLIS" \
+      "$VPS_FULL_SUDO"
 }
 
 run_dry_run() {
@@ -907,6 +1312,8 @@ Configuration:
   hostname: ${VPS_HOSTNAME:-<server default>}
   public key fingerprint source: ${#public_key} bytes
   Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'enabled' || printf 'disabled')
+  developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')
+  sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')
   public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')
 
 Phase 1: prepare as root
@@ -917,6 +1324,10 @@ Phase 2: verify Tailnet key login
 
 Phase 3: harden over Tailnet
   $(build_admin_harden_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
+
+Post-setup agent auth on the VPS:
+  vps-agent-auth --all
+  vps-agent-auth --status
 
 UFW prepare preview:
 $(generate_ufw_rules prepare "$VPS_WEB")
@@ -971,6 +1382,11 @@ Public inbound policy:
 
 Provider firewall reminder:
   Mirror this policy in your VPS provider firewall: no public TCP 22; public TCP 80/443 only when hosting web apps.
+
+Agent CLI authentication:
+  SSH to the server over Tailnet, then run:
+    vps-agent-auth --all
+    vps-agent-auth --status
 SUMMARY
 }
 
