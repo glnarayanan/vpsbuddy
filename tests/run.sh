@@ -199,6 +199,7 @@ test_remote_script_installs_agent_clis_and_supports_auth_modes() {
   assert_contains "remote script records codex version" "$script" "VPS_BOOTSTRAP_CODEX_VERSION="
   assert_contains "remote script records grok version" "$script" "VPS_BOOTSTRAP_GROK_VERSION="
   assert_contains "remote script records github cli version" "$script" "VPS_BOOTSTRAP_GH_VERSION="
+  assert_contains "remote script logs accepted codex installer trust" "$script" "accepted supply-chain trust boundary"
   assert_not_contains "remote script does not install third-party grok package" "$script" "npm install -g @vibe-kit/grok-cli"
   assert_not_contains "remote script does not install codex with npm" "$script" "npm install -g @openai/codex"
   assert_not_contains "remote script does not install claude" "$script" "claude-code"
@@ -256,11 +257,14 @@ test_sudoers_policy_is_scoped_by_default() {
   local policy
   policy="$(generate_sudoers_policy "deploy" "0")"
 
-  assert_contains "scoped sudo allows apt" "$policy" "/usr/bin/apt-get"
-  assert_contains "scoped sudo allows systemctl" "$policy" "/usr/bin/systemctl"
-  assert_contains "scoped sudo allows journalctl" "$policy" "/usr/bin/journalctl"
-  assert_contains "scoped sudo allows npm global installs" "$policy" "/usr/bin/npm"
-  assert_contains "scoped sudo allows grok cli" "$policy" "/usr/bin/grok"
+  assert_contains "scoped sudo allows package helper" "$policy" "/usr/local/sbin/vps-agent-package"
+  assert_contains "scoped sudo allows service helper" "$policy" "/usr/local/sbin/vps-agent-service"
+  assert_contains "scoped sudo allows deploy helper" "$policy" "/usr/local/sbin/vps-agent-deploy"
+  assert_contains "scoped sudo allows sudo check helper" "$policy" "/usr/local/sbin/vps-agent-sudo-check"
+  assert_not_contains "scoped sudo avoids raw apt" "$policy" "/usr/bin/apt-get"
+  assert_not_contains "scoped sudo avoids raw systemctl" "$policy" "/usr/bin/systemctl"
+  assert_not_contains "scoped sudo avoids raw npm" "$policy" "/usr/bin/npm"
+  assert_not_contains "scoped sudo avoids user cli symlink" "$policy" "/usr/local/bin/grok"
   assert_not_contains "scoped sudo avoids claude cli" "$policy" "/usr/bin/claude"
   assert_not_contains "scoped sudo avoids all access" "$policy" "NOPASSWD:ALL"
 }
@@ -277,8 +281,26 @@ test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy() {
   script="$(generate_remote_script)"
 
   assert_contains "remote script grants temporary bootstrap sudo" "$script" "write_sudoers_policy \"1\""
+  assert_contains "remote script installs bounded sudo helpers" "$script" "install_agent_sudo_helpers"
+  assert_contains "remote script writes package helper" "$script" "/usr/local/sbin/vps-agent-package"
+  assert_contains "remote script writes deploy helper" "$script" "/usr/local/sbin/vps-agent-deploy"
   assert_contains "remote script writes final requested sudo policy" "$script" 'write_sudoers_policy "$full_sudo"'
   assert_order "remote script final sudo policy happens during harden" "$script" "write_sshd_hardening" 'write_sudoers_policy "$full_sudo"'
+}
+
+test_host_public_key_validation_and_known_hosts() {
+  local known_hosts
+
+  validate_host_public_key_line "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample"
+  if validate_host_public_key_line "SHA256:not-a-public-key" >/tmp/vps-bootstrap-test.out 2>/tmp/vps-bootstrap-test.err; then
+    fail "fingerprint should not be accepted as host public key"
+    return
+  fi
+
+  known_hosts="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-test-known-hosts.XXXXXX")"
+  write_known_hosts_file "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample" "$known_hosts"
+  assert_contains "known hosts uses stable alias" "$(cat "$known_hosts")" "vps-bootstrap-target ssh-ed25519"
+  rm -f "$known_hosts"
 }
 
 test_dry_run_prints_rollback_safe_phase_ordering() {
@@ -294,6 +316,7 @@ test_dry_run_prints_rollback_safe_phase_ordering() {
 
   assert_contains "dry-run announces no remote mutation" "$output" "Dry run: no SSH connections will be opened."
   assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare as root"
+  assert_contains "dry-run includes pinned host key note" "$output" "temporary known_hosts"
   assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
   assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: install"
   assert_contains "dry-run includes post setup auth command" "$output" "vps-agent-auth --all"
@@ -308,9 +331,12 @@ test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip() {
   command="$(build_admin_verify_command "deploy" "100.64.0.10" "tests/fixtures/identity_fixture")"
 
   assert_contains "verify command uses batch mode" "$command" "-o BatchMode=yes"
+  assert_contains "verify command pins known hosts file" "$command" "UserKnownHostsFile=<temporary-known-hosts>"
+  assert_contains "verify command uses host key alias" "$command" "HostKeyAlias=vps-bootstrap-target"
+  assert_contains "verify command requires strict host checking" "$command" "StrictHostKeyChecking=yes"
   assert_contains "verify command pins identity" "$command" "-i tests/fixtures/identity_fixture"
   assert_contains "verify command targets tailnet ip" "$command" "deploy@100.64.0.10"
-  assert_contains "verify command checks sudo" "$command" "sudo -n true"
+  assert_contains "verify command checks bounded sudo helper" "$command" "sudo -n /usr/local/sbin/vps-agent-sudo-check"
 }
 
 test_parse_prepare_output_extracts_tailnet_ip() {
@@ -388,6 +414,7 @@ test_remote_script_installs_agent_auth_helper
 test_sudoers_policy_is_scoped_by_default
 test_sudoers_policy_supports_full_sudo_escape_hatch
 test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy
+test_host_public_key_validation_and_known_hosts
 test_dry_run_prints_rollback_safe_phase_ordering
 test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip
 test_parse_prepare_output_extracts_tailnet_ip

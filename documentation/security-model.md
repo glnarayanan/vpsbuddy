@@ -10,18 +10,20 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 - SSH is allowed only on the Tailscale interface.
 - Public TCP 80/443 remain open by default for hosted web applications.
 - Unsolicited inbound traffic is denied by the host firewall.
-- The admin user has scoped passwordless sudo by default so common agentic operations can work without broad root access.
+- The admin user has passwordless sudo by default only for root-owned `vps-agent-*` helpers so common agentic operations can work without raw broad root primitives.
 - Codex CLI, Grok CLI, and GitHub CLI are installed by default, but authentication is deferred to the post-setup `vps-agent-auth` helper.
 - Codex and Grok are updated every two days by `vps-agent-cli-update.timer`.
 - OS packages are updated every two weeks by `vps-os-update.timer`; apt hosts also receive fourteen-day `unattended-upgrades` periodic configuration.
 
 ## Phased Rollback Protection
 
-The first remote phase creates the admin user, installs the key, installs Tailscale, joins the Tailnet, enables baseline services, installs developer CLIs, and configures the firewall with temporary public SSH still allowed.
+Before the first remote phase, the local CLI prompts for the VPS SSH host public key from the provider console and pins it in a temporary `known_hosts` file. The script then uses strict host-key checking instead of trusting the first key seen.
 
-The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n true`. Only after that succeeds does the harden phase run over the Tailnet connection.
+The first remote phase creates the admin user, installs the key, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, installs developer CLIs, and configures the firewall with temporary public SSH still allowed.
 
-The prepare phase temporarily grants broad passwordless sudo so the verified Tailnet harden phase can run through `sudo bash -s`. The harden phase then writes the final requested sudo policy: scoped by default, or `NOPASSWD:ALL` only when `--full-sudo` is passed.
+The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n /usr/local/sbin/vps-agent-sudo-check`. Only after that succeeds does the harden phase run over the Tailnet connection.
+
+The prepare phase temporarily grants broad passwordless sudo so the verified Tailnet harden phase can run through `sudo bash -s`. The harden phase then writes the final requested sudo policy: bounded helper access by default, or `NOPASSWD:ALL` only when `--full-sudo` is passed.
 
 The harden phase also writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf`, validates it with `sshd -t`, reloads SSH, and removes public SSH from UFW or firewalld.
 
@@ -29,17 +31,19 @@ The harden phase also writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.
 
 `vps-agent-auth` runs native auth flows where available and prints setup checks for API-key based tools after bootstrap is complete.
 
-The bootstrap script does not accept, upload, or store raw agent CLI tokens or API keys. Each CLI handles its own auth state or configuration:
+The bootstrap script does not accept, upload, or store raw agent CLI tokens, API keys, or GitHub private keys. Each CLI handles its own auth state or configuration:
 
 - Codex auth through `codex login`.
 - Grok auth through `grok login`, or `XAI_API_KEY` in non-browser environments.
 - GitHub CLI auth through `gh auth login --hostname github.com --git-protocol ssh`.
 
-The admin user receives scoped passwordless sudo by default for package, service, log, firewall, deployment, and agent-tool operations. Use `--full-sudo` only when a server intentionally needs broad `NOPASSWD:ALL`.
+The admin user receives passwordless sudo by default for these root-owned helpers only: `vps-agent-sudo-check`, `vps-agent-package`, `vps-agent-service`, `vps-agent-logs`, `vps-agent-firewall`, `vps-agent-deploy`, `vps-agent-cli-update`, and `vps-os-update`. Raw package managers, `systemctl`, `npm`, file ownership/write tools, and user-level Codex/Grok binaries are not directly sudo-allowed by the default policy. Use `--full-sudo` only when a server intentionally needs broad `NOPASSWD:ALL`.
 
 ## Update Automation
 
 `vps-agent-cli-update.timer` runs every two days with persistence across reboots. It reruns OpenAI's Codex installer in non-interactive mode and runs `grok update` as the admin user.
+
+The Codex, Grok, and Tailscale installer paths intentionally trust official mutable upstream installer/update endpoints because version-pinned installers are not available in this script. The bootstrap logs that accepted supply-chain trust boundary when those installers or updates run, and the default sudo policy does not give the installed user-level CLIs direct passwordless root access.
 
 `vps-os-update.timer` runs every two weeks with persistence across reboots. It uses `unattended-upgrade -d` on apt hosts when available, `dnf -y upgrade` on dnf hosts, and `yum -y update` on yum hosts.
 

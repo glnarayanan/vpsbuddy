@@ -42,7 +42,9 @@ Options:
   -h, --help                    Show this help.
 
 The tool assumes the first connection is root@<host> with password auth. It does
-not store or pass the root password; OpenSSH prompts for it normally.
+not store or pass the root password; OpenSSH prompts for it normally. Before
+that first connection, paste the VPS SSH host public key from your provider
+console so the bootstrap can pin the host instead of trusting the first key seen.
 USAGE
 }
 
@@ -295,15 +297,47 @@ generate_sudoers_policy() {
   fi
 
   cat <<SUDOERS_POLICY
-# Managed by vps-bootstrap. Scoped passwordless sudo for agentic operations.
-Cmnd_Alias VPS_PKG = /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dnf, /usr/bin/yum
-Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
-Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
-Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
-Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
-Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
-$admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
+# Managed by vps-bootstrap. Passwordless sudo is limited to root-owned helpers.
+Cmnd_Alias VPS_AGENT_HELPERS = /usr/local/sbin/vps-agent-sudo-check, /usr/local/sbin/vps-agent-package, /usr/local/sbin/vps-agent-service, /usr/local/sbin/vps-agent-logs, /usr/local/sbin/vps-agent-firewall, /usr/local/sbin/vps-agent-deploy, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
+$admin_user ALL=(root) NOPASSWD: VPS_AGENT_HELPERS
 SUDOERS_POLICY
+}
+
+validate_host_public_key_line() {
+  local key_line="$1"
+
+  case "$key_line" in
+    ssh-*' '* | ecdsa-*' '* | sk-*' '*)
+      return 0
+      ;;
+    *)
+      error "host public key must be one OpenSSH public key line, for example: ssh-ed25519 AAAA..."
+      return 1
+      ;;
+  esac
+}
+
+prompt_host_public_key() {
+  local key_line
+
+  cat >&2 <<PROMPT
+[vps-bootstrap] Paste the VPS SSH host public key from your provider console.
+[vps-bootstrap] This is the server host key, not your user SSH key.
+[vps-bootstrap] Example: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
+Host public key:
+PROMPT
+  IFS= read -r key_line
+  validate_host_public_key_line "$key_line" || return 1
+  printf '%s\n' "$key_line"
+}
+
+write_known_hosts_file() {
+  local key_line="$1"
+  local output="$2"
+
+  validate_host_public_key_line "$key_line" || return 1
+  umask 077
+  printf 'vps-bootstrap-target %s\n' "$key_line" >"$output"
 }
 
 generate_agent_auth_helper_script() {
@@ -817,15 +851,245 @@ generate_sudoers_policy_remote() {
   fi
 
   cat <<SUDOERS_POLICY
-# Managed by vps-bootstrap. Scoped passwordless sudo for agentic operations.
-Cmnd_Alias VPS_PKG = /usr/bin/apt-get, /usr/bin/apt, /usr/bin/dnf, /usr/bin/yum
-Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
-Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
-Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
-Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
-Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
-$admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
+# Managed by vps-bootstrap. Passwordless sudo is limited to root-owned helpers.
+Cmnd_Alias VPS_AGENT_HELPERS = /usr/local/sbin/vps-agent-sudo-check, /usr/local/sbin/vps-agent-package, /usr/local/sbin/vps-agent-service, /usr/local/sbin/vps-agent-logs, /usr/local/sbin/vps-agent-firewall, /usr/local/sbin/vps-agent-deploy, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
+$admin_user ALL=(root) NOPASSWD: VPS_AGENT_HELPERS
 SUDOERS_POLICY
+}
+
+install_agent_sudo_helpers() {
+  local home_dir
+
+  home_dir="$(admin_home_dir)"
+  install -d -m 0755 /usr/local/sbin
+
+  cat >/usr/local/sbin/vps-agent-sudo-check <<'SUDO_CHECK_HELPER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'vps-agent sudo helper access ok\n'
+SUDO_CHECK_HELPER
+
+  {
+    cat <<'PACKAGE_HELPER_HEAD'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+PACKAGE_HELPER_HEAD
+    printf 'pkg_backend=%q\n' "$PKG_BACKEND"
+    cat <<'PACKAGE_HELPER_BODY'
+
+valid_package() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9+_.:-]*$ ]]
+}
+
+usage() {
+  printf 'Usage: vps-agent-package update|upgrade|install <package> [...]\n' >&2
+  exit 2
+}
+
+[[ "$#" -ge 1 ]] || usage
+action="$1"
+shift
+
+case "$action" in
+  update)
+    [[ "$#" -eq 0 ]] || usage
+    case "$pkg_backend" in
+      apt) apt-get update ;;
+      dnf) dnf makecache -y ;;
+      yum) yum makecache -y ;;
+      *) printf 'unsupported package backend: %s\n' "$pkg_backend" >&2; exit 1 ;;
+    esac
+    ;;
+  upgrade)
+    [[ "$#" -eq 0 ]] || usage
+    case "$pkg_backend" in
+      apt) export DEBIAN_FRONTEND=noninteractive; apt-get update; apt-get -y upgrade ;;
+      dnf) dnf -y upgrade ;;
+      yum) yum -y update ;;
+      *) printf 'unsupported package backend: %s\n' "$pkg_backend" >&2; exit 1 ;;
+    esac
+    ;;
+  install)
+    [[ "$#" -ge 1 ]] || usage
+    for package in "$@"; do
+      valid_package "$package" || {
+        printf 'invalid package name: %s\n' "$package" >&2
+        exit 2
+      }
+    done
+    case "$pkg_backend" in
+      apt) export DEBIAN_FRONTEND=noninteractive; apt-get update; apt-get install -y "$@" ;;
+      dnf) dnf install -y "$@" ;;
+      yum) yum install -y "$@" ;;
+      *) printf 'unsupported package backend: %s\n' "$pkg_backend" >&2; exit 1 ;;
+    esac
+    ;;
+  *)
+    usage
+    ;;
+esac
+PACKAGE_HELPER_BODY
+  } >/usr/local/sbin/vps-agent-package
+
+  cat >/usr/local/sbin/vps-agent-service <<'SERVICE_HELPER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  printf 'Usage: vps-agent-service start|stop|restart|reload|status|enable|disable <service>\n' >&2
+  exit 2
+}
+
+valid_service() {
+  [[ "$1" =~ ^[A-Za-z0-9@_.-]+(\\.service)?$ ]]
+}
+
+[[ "$#" -eq 2 ]] || usage
+action="$1"
+service="$2"
+valid_service "$service" || {
+  printf 'invalid service name: %s\n' "$service" >&2
+  exit 2
+}
+
+case "$action" in
+  start | stop | restart | reload | status | enable | disable)
+    systemctl "$action" "$service"
+    ;;
+  *)
+    usage
+    ;;
+esac
+SERVICE_HELPER
+
+  cat >/usr/local/sbin/vps-agent-logs <<'LOGS_HELPER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  printf 'Usage: vps-agent-logs <service> [lines]\n' >&2
+  exit 2
+}
+
+valid_service() {
+  [[ "$1" =~ ^[A-Za-z0-9@_.-]+(\\.service)?$ ]]
+}
+
+[[ "$#" -ge 1 && "$#" -le 2 ]] || usage
+service="$1"
+lines="${2:-200}"
+valid_service "$service" || {
+  printf 'invalid service name: %s\n' "$service" >&2
+  exit 2
+}
+[[ "$lines" =~ ^[0-9]+$ && "$lines" -le 5000 ]] || {
+  printf 'lines must be a number up to 5000\n' >&2
+  exit 2
+}
+
+journalctl -u "$service" -n "$lines" --no-pager
+LOGS_HELPER
+
+  {
+    cat <<'FIREWALL_HELPER_HEAD'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+FIREWALL_HELPER_HEAD
+    printf 'firewall_backend=%q\n' "$FIREWALL_BACKEND"
+    cat <<'FIREWALL_HELPER_BODY'
+
+usage() {
+  printf 'Usage: vps-agent-firewall web-on|web-off|status\n' >&2
+  exit 2
+}
+
+[[ "$#" -eq 1 ]] || usage
+case "$1:$firewall_backend" in
+  web-on:ufw)
+    ufw allow 80/tcp comment 'vps-agent public http'
+    ufw allow 443/tcp comment 'vps-agent public https'
+    ;;
+  web-off:ufw)
+    ufw --force delete allow 80/tcp || true
+    ufw --force delete allow 443/tcp || true
+    ;;
+  status:ufw)
+    ufw status verbose
+    ;;
+  web-on:firewalld)
+    firewall-cmd --permanent --zone=public --add-service=http
+    firewall-cmd --permanent --zone=public --add-service=https
+    firewall-cmd --reload
+    ;;
+  web-off:firewalld)
+    firewall-cmd --permanent --zone=public --remove-service=http || true
+    firewall-cmd --permanent --zone=public --remove-service=https || true
+    firewall-cmd --reload
+    ;;
+  status:firewalld)
+    firewall-cmd --list-all
+    ;;
+  *)
+    usage
+    ;;
+esac
+FIREWALL_HELPER_BODY
+  } >/usr/local/sbin/vps-agent-firewall
+
+  {
+    cat <<'DEPLOY_HELPER_HEAD'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+DEPLOY_HELPER_HEAD
+    printf 'admin_user=%q\n' "$admin_user"
+    printf 'home_dir=%q\n' "$home_dir"
+    cat <<'DEPLOY_HELPER_BODY'
+
+usage() {
+  printf 'Usage: vps-agent-deploy <source-dir> <target-dir-under-/srv-or-/var/www>\n' >&2
+  exit 2
+}
+
+[[ "$#" -eq 2 ]] || usage
+source_dir="${1%/}"
+target_dir="${2%/}"
+
+case "$source_dir" in
+  "$home_dir"/* | /tmp/*)
+    ;;
+  *)
+    printf 'source must be under %s or /tmp\n' "$home_dir" >&2
+    exit 2
+    ;;
+esac
+
+case "$target_dir" in
+  /srv/* | /var/www/*)
+    ;;
+  *)
+    printf 'target must be under /srv or /var/www\n' >&2
+    exit 2
+    ;;
+esac
+
+[[ -d "$source_dir" ]] || {
+  printf 'source directory does not exist: %s\n' "$source_dir" >&2
+  exit 2
+}
+
+install -d -m 0755 "$target_dir"
+rsync -a --delete "$source_dir"/ "$target_dir"/
+chown -R "$admin_user:$admin_user" "$target_dir"
+DEPLOY_HELPER_BODY
+  } >/usr/local/sbin/vps-agent-deploy
+
+  chmod 755 \
+    /usr/local/sbin/vps-agent-sudo-check \
+    /usr/local/sbin/vps-agent-package \
+    /usr/local/sbin/vps-agent-service \
+    /usr/local/sbin/vps-agent-logs \
+    /usr/local/sbin/vps-agent-firewall \
+    /usr/local/sbin/vps-agent-deploy
 }
 
 write_sudoers_policy() {
@@ -909,6 +1173,7 @@ install_codex_cli() {
 
   home_dir="$(admin_home_dir)"
   log "installing/updating official Codex CLI for $admin_user"
+  warn "executing OpenAI's mutable official Codex installer; this is an accepted supply-chain trust boundary"
   run_as_admin "$home_dir" 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
 
   if ! link_admin_command "$home_dir" codex; then
@@ -928,6 +1193,7 @@ install_grok_cli() {
     log "Grok CLI is already installed for $admin_user"
   else
     log "installing official Grok CLI for $admin_user"
+    warn "executing xAI's mutable official Grok installer; this is an accepted supply-chain trust boundary"
     sudo -H -u "$admin_user" env SHELL=/bin/bash bash -c 'curl -fsSL https://x.ai/cli/install.sh | bash'
   fi
 
@@ -1056,14 +1322,18 @@ link_admin_command() {
   ln -sf "$command_path" "/usr/local/bin/$command_name"
 }
 
+printf '[vps-bootstrap] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
 run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
 link_admin_command codex
 
 if run_as_admin 'command -v grok >/dev/null 2>&1'; then
+  printf '[vps-bootstrap] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
   run_as_admin 'grok update'
 elif [[ -x "$home_dir/.grok/bin/grok" ]]; then
+  printf '[vps-bootstrap] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
   run_as_admin "$(printf '%q' "$home_dir/.grok/bin/grok") update"
 else
+  printf '[vps-bootstrap] installing Grok from xAI official installer; accepted mutable installer trust boundary\n' >&2
   run_as_admin 'curl -fsSL https://x.ai/cli/install.sh | bash'
 fi
 
@@ -1306,6 +1576,7 @@ install_tailscale() {
     log "tailscale is already installed"
   else
     log "installing tailscale with official Linux installer"
+    warn "executing Tailscale's mutable official installer as root; this is an accepted supply-chain trust boundary"
     curl -fsSL https://tailscale.com/install.sh | sh
   fi
 
@@ -1479,6 +1750,7 @@ run_prepare() {
   configure_automatic_updates
   install_ban_service
   ensure_admin_user
+  install_agent_sudo_helpers
   set_requested_hostname
   install_agent_clis_if_requested
   ensure_tailscale_connected
@@ -1497,6 +1769,7 @@ run_harden() {
   validate_hostname_remote
   select_platform
   ensure_tailscale_connected
+  install_agent_sudo_helpers
   configure_firewall harden
   write_sshd_hardening
   write_sudoers_policy "$full_sudo"
@@ -1523,7 +1796,7 @@ REMOTE_SCRIPT
 build_root_prepare_command() {
   local host="$1"
 
-  printf 'stream config + script | ssh -tt -o StrictHostKeyChecking=accept-new %s %s' \
+  printf 'paste host public key -> temporary known_hosts; stream config + script | ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
     "$(shell_quote "root@$host")" \
     "$(shell_quote "bash -s")"
 }
@@ -1533,10 +1806,10 @@ build_admin_verify_command() {
   local tailnet_ip="$2"
   local identity="$3"
 
-  printf 'ssh -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new %s %s' \
+  printf 'ssh -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
     "$(shell_quote "$identity")" \
     "$(shell_quote "$admin_user@$tailnet_ip")" \
-    "'sudo -n true'"
+    "'sudo -n /usr/local/sbin/vps-agent-sudo-check'"
 }
 
 build_admin_harden_command() {
@@ -1544,7 +1817,7 @@ build_admin_harden_command() {
   local tailnet_ip="$2"
   local identity="$3"
 
-  printf 'stream config + script | ssh -tt -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new %s %s' \
+  printf 'stream config + script | ssh -tt -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
     "$(shell_quote "$identity")" \
     "$(shell_quote "$admin_user@$tailnet_ip")" \
     "$(shell_quote "sudo bash -s")"
@@ -1575,30 +1848,41 @@ parse_prepare_tailnet_ip() {
 
 run_remote_prepare() {
   local public_key="$1"
+  local known_hosts_file="$2"
 
   {
     generate_remote_config_prelude prepare "$public_key"
     generate_remote_script
   } |
-    ssh -tt -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'bash -s' -- \
+    ssh \
+      -tt \
+      -o UserKnownHostsFile="$known_hosts_file" \
+      -o HostKeyAlias=vps-bootstrap-target \
+      -o StrictHostKeyChecking=yes \
+      "root@$VPS_HOST" \
+      'bash -s' -- \
       prepare
 }
 
 verify_admin_login() {
   local tailnet_ip="$1"
+  local known_hosts_file="$2"
 
   ssh \
     -i "$VPS_IDENTITY" \
     -o IdentitiesOnly=yes \
     -o BatchMode=yes \
-    -o StrictHostKeyChecking=accept-new \
+    -o UserKnownHostsFile="$known_hosts_file" \
+    -o HostKeyAlias=vps-bootstrap-target \
+    -o StrictHostKeyChecking=yes \
     "$VPS_ADMIN_USER@$tailnet_ip" \
-    'sudo -n true'
+    'sudo -n /usr/local/sbin/vps-agent-sudo-check'
 }
 
 run_remote_harden() {
   local tailnet_ip="$1"
   local public_key="$2"
+  local known_hosts_file="$3"
 
   {
     generate_remote_config_prelude harden "$public_key"
@@ -1609,7 +1893,9 @@ run_remote_harden() {
       -i "$VPS_IDENTITY" \
       -o IdentitiesOnly=yes \
       -o BatchMode=yes \
-      -o StrictHostKeyChecking=accept-new \
+      -o UserKnownHostsFile="$known_hosts_file" \
+      -o HostKeyAlias=vps-bootstrap-target \
+      -o StrictHostKeyChecking=yes \
       "$VPS_ADMIN_USER@$tailnet_ip" \
       'sudo bash -s' -- \
       harden
@@ -1656,7 +1942,7 @@ DRY_RUN
 }
 
 run_bootstrap() {
-  local public_key prepare_log prepare_output tailnet_ip
+  local host_public_key known_hosts_file public_key prepare_log prepare_output tailnet_ip
 
   validate_local_files || return 1
   public_key="$(read_public_key "$VPS_PUBKEY")" || return 1
@@ -1666,11 +1952,14 @@ run_bootstrap() {
     return $?
   fi
 
+  host_public_key="$(prompt_host_public_key)" || return 1
+  known_hosts_file="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-known-hosts.XXXXXX")"
+  write_known_hosts_file "$host_public_key" "$known_hosts_file" || return 1
   prepare_log="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap.XXXXXX")"
-  trap 'rm -f "$prepare_log"' RETURN
+  trap 'rm -f "$prepare_log" "$known_hosts_file"' RETURN
 
   printf '[vps-bootstrap] Phase 1: prepare as root. OpenSSH will prompt for the root password.\n'
-  run_remote_prepare "$public_key" 2>&1 | tee "$prepare_log"
+  run_remote_prepare "$public_key" "$known_hosts_file" 2>&1 | tee "$prepare_log"
 
   prepare_output="$(cat "$prepare_log")"
   tailnet_ip="$(parse_prepare_tailnet_ip "$prepare_output")"
@@ -1680,10 +1969,10 @@ run_bootstrap() {
   fi
 
   printf '[vps-bootstrap] Phase 2: verify Tailnet key login for %s@%s.\n' "$VPS_ADMIN_USER" "$tailnet_ip"
-  verify_admin_login "$tailnet_ip"
+  verify_admin_login "$tailnet_ip" "$known_hosts_file"
 
   printf '[vps-bootstrap] Phase 3: harden over Tailnet after successful key/sudo verification.\n'
-  run_remote_harden "$tailnet_ip" "$public_key"
+  run_remote_harden "$tailnet_ip" "$public_key" "$known_hosts_file"
 
   cat <<SUMMARY
 

@@ -13,6 +13,7 @@ The tool:
 - Installs Codex CLI, Grok CLI, and GitHub CLI by default.
 - Keeps Codex and Grok current with a two-day systemd update timer.
 - Installs OS updates every two weeks with an unattended systemd update timer.
+- Pins the first SSH connection to a host public key pasted from the provider console.
 - Supports Ubuntu/Debian through apt and Fedora/RHEL-family hosts through dnf/yum.
 
 ## Usage
@@ -49,6 +50,8 @@ The bootstrap installs these developer tools by default:
 - Grok CLI via xAI's official installer, `curl -fsSL https://x.ai/cli/install.sh | bash`, run as the admin user.
 - GitHub CLI through GitHub's signed apt or rpm repositories.
 
+Codex and Grok do not currently expose version-pinned installer URLs in this script. The bootstrap intentionally trusts their official mutable installer/update endpoints, logs that trust boundary during installation and updates, and avoids giving the installed user-level CLIs direct passwordless root access.
+
 The bootstrap also installs `vps-agent-cli-update.service` and `vps-agent-cli-update.timer`. The timer runs every two days and:
 
 - Reruns `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh` as the admin user.
@@ -76,11 +79,24 @@ The helper starts native interactive auth where available and prints setup check
 - `grok login`, or `XAI_API_KEY` in non-browser environments
 - `gh auth login --hostname github.com --git-protocol ssh`
 
-The bootstrap script does not accept, upload, or store raw agent CLI tokens or API keys.
+The bootstrap script does not accept, upload, or store raw agent CLI tokens, API keys, or GitHub private keys. GitHub SSH setup stays inside the native `gh auth login --git-protocol ssh` flow on the server.
 
 ## Sudo Policy
 
-The admin user receives scoped passwordless sudo by default for package, service, log, firewall, deployment, and agent-tool operations. Use `--full-sudo` only when you intentionally want broad `NOPASSWD:ALL` behavior:
+The admin user receives passwordless sudo by default, but only for root-owned `vps-agent-*` helper commands installed under `/usr/local/sbin`. These helpers bound common agent operations without granting direct passwordless access to raw package managers, `systemctl`, `npm`, generic file-write tools, or user-level Codex/Grok binaries.
+
+Default helpers:
+
+- `vps-agent-sudo-check`
+- `vps-agent-package update|upgrade|install <package> [...]`
+- `vps-agent-service start|stop|restart|reload|status|enable|disable <service>`
+- `vps-agent-logs <service> [lines]`
+- `vps-agent-firewall web-on|web-off|status`
+- `vps-agent-deploy <source-dir> <target-dir-under-/srv-or-/var/www>`
+- `vps-agent-cli-update`
+- `vps-os-update`
+
+Use `--full-sudo` only when you intentionally want broad `NOPASSWD:ALL` behavior:
 
 ```bash
 bin/vps-bootstrap --host 203.0.113.10 --full-sudo
@@ -88,11 +104,22 @@ bin/vps-bootstrap --host 203.0.113.10 --full-sudo
 
 During bootstrap, the prepare phase briefly grants broad passwordless sudo so the verified Tailnet harden phase can run. The harden phase rewrites that file to the final scoped policy unless `--full-sudo` is set.
 
+## First SSH Host Key
+
+Before the first `root@host` connection, the CLI prompts you to paste the VPS SSH host public key from your provider console. Paste the full OpenSSH host public key line, for example:
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
+```
+
+This is the server host key, not your local user key and not a SHA256 fingerprint. The script writes the pasted key to a temporary `known_hosts` file and uses strict host-key checking for the public root connection and later Tailnet SSH verification.
+
 ## Requirements
 
 - Run from your laptop or workstation.
 - The VPS must initially allow `root@host` SSH with password authentication.
-- Your OpenSSH public and private key files must be available locally.
+- Your local OpenSSH public key and matching private key path must be available locally so the script can install the public key and verify Tailnet login. Do not paste private keys into this bootstrap.
+- Your VPS provider must expose the server SSH host public key so you can paste it into the prompt before first connection.
 - The VPS must have outbound internet access for package installation and Tailscale login.
 - You must be able to approve the interactive Tailscale login URL during the prepare phase.
 - Developer CLI auth happens after setup through `vps-agent-auth`.
@@ -102,7 +129,7 @@ During bootstrap, the prepare phase briefly grants broad passwordless sudo so th
 The script intentionally works in three phases:
 
 1. Prepare as root while keeping temporary public SSH open.
-2. Verify the new admin user can SSH over the Tailnet and run `sudo -n true`.
+2. Verify the new admin user can SSH over the Tailnet and run `sudo -n /usr/local/sbin/vps-agent-sudo-check`.
 3. Harden SSH and remove public SSH only after verification passes.
 4. Run `vps-agent-auth --all` later from the VPS when ready to authenticate developer CLIs.
 
