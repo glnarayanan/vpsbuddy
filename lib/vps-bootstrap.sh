@@ -301,7 +301,7 @@ Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
 Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
 Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
 Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
-Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
+Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
 $admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
 SUDOERS_POLICY
 }
@@ -710,19 +710,88 @@ configure_automatic_updates() {
       dpkg-reconfigure -f noninteractive unattended-upgrades || true
     fi
 
+    cat >/etc/apt/apt.conf.d/20auto-upgrades <<'APT_AUTO_UPGRADES'
+APT::Periodic::Update-Package-Lists "14";
+APT::Periodic::Unattended-Upgrade "14";
+APT::Periodic::AutocleanInterval "14";
+APT_AUTO_UPGRADES
+
     systemctl enable --now unattended-upgrades >/dev/null 2>&1 || warn "unattended-upgrades service not enabled"
-    return 0
-  fi
-
-  if command_exists dnf-automatic; then
-    if enable_service dnf-automatic-install.timer; then
-      return 0
-    fi
-
-    enable_service dnf-automatic.timer || warn "dnf automatic install timer not enabled"
+  elif command_exists dnf-automatic; then
+    log "dnf-automatic is installed; vps-os-update.timer controls the two-week update cadence"
   else
-    warn "dnf-automatic is unavailable; automatic security updates were not enabled"
+    warn "dnf-automatic is unavailable; vps-os-update.timer will still run package-manager updates"
   fi
+
+  install_os_update_timer
+}
+
+install_os_update_timer() {
+  install -d -m 0755 /usr/local/sbin
+
+  {
+    cat <<'OS_UPDATE_SCRIPT_HEAD'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+OS_UPDATE_SCRIPT_HEAD
+    printf 'pkg_backend=%q\n' "$PKG_BACKEND"
+    cat <<'OS_UPDATE_SCRIPT_BODY'
+
+case "$pkg_backend" in
+  apt)
+    apt-get update
+    if command -v unattended-upgrade >/dev/null 2>&1; then
+      unattended-upgrade -d
+    else
+      apt-get -y upgrade
+    fi
+    apt-get -y autoremove
+    ;;
+  dnf)
+    dnf -y upgrade
+    ;;
+  yum)
+    yum -y update
+    ;;
+  *)
+    printf 'unsupported package backend: %s\n' "$pkg_backend" >&2
+    exit 1
+    ;;
+esac
+OS_UPDATE_SCRIPT_BODY
+  } >/usr/local/sbin/vps-os-update
+
+  chmod 755 /usr/local/sbin/vps-os-update
+
+  cat >/etc/systemd/system/vps-os-update.service <<'OS_UPDATE_SERVICE'
+[Unit]
+Description=Install OS updates managed by vps-bootstrap
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vps-os-update
+OS_UPDATE_SERVICE
+
+  cat >/etc/systemd/system/vps-os-update.timer <<'OS_UPDATE_TIMER'
+[Unit]
+Description=Run vps-bootstrap OS updates every two weeks
+
+[Timer]
+OnBootSec=45min
+OnUnitActiveSec=14d
+Persistent=true
+RandomizedDelaySec=2h
+
+[Install]
+WantedBy=timers.target
+OS_UPDATE_TIMER
+
+  systemctl daemon-reload
+  systemctl enable --now vps-os-update.timer
 }
 
 install_ban_service() {
@@ -754,7 +823,7 @@ Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
 Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
 Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
 Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
-Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
+Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
 $admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
 SUDOERS_POLICY
 }
@@ -767,6 +836,57 @@ write_sudoers_policy() {
   generate_sudoers_policy_remote "$policy_full" >"$sudoers_file"
   chmod 440 "$sudoers_file"
   visudo -cf "$sudoers_file" >/dev/null
+}
+
+admin_home_dir() {
+  getent passwd "$admin_user" | cut -d: -f6
+}
+
+run_as_admin() {
+  local home_dir="$1"
+  local command="$2"
+
+  sudo -H -u "$admin_user" env HOME="$home_dir" SHELL=/bin/bash bash -lc "$command"
+}
+
+admin_command_path() {
+  local home_dir="$1"
+  local command_name="$2"
+  local candidate
+
+  case "$command_name" in
+    codex)
+      for candidate in "$home_dir/.codex/bin/codex" "$home_dir/.local/bin/codex" "$home_dir/bin/codex"; do
+        if [[ -x "$candidate" ]]; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      done
+      ;;
+    grok | agent)
+      candidate="$home_dir/.grok/bin/$command_name"
+      if [[ -x "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+      ;;
+  esac
+
+  run_as_admin "$home_dir" "command -v $(printf '%q' "$command_name")" 2>/dev/null || true
+}
+
+link_admin_command() {
+  local home_dir="$1"
+  local command_name="$2"
+  local command_path
+
+  command_path="$(admin_command_path "$home_dir" "$command_name")"
+  if [[ -z "$command_path" || ! -x "$command_path" ]]; then
+    return 1
+  fi
+
+  install -d -m 0755 /usr/local/bin
+  ln -sf "$command_path" "/usr/local/bin/$command_name"
 }
 
 install_node_runtime() {
@@ -785,22 +905,23 @@ install_node_runtime() {
 }
 
 install_codex_cli() {
-  install_node_runtime
+  local home_dir
 
-  if command_exists codex; then
-    log "Codex CLI is already installed"
-    return 0
+  home_dir="$(admin_home_dir)"
+  log "installing/updating official Codex CLI for $admin_user"
+  run_as_admin "$home_dir" 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
+
+  if ! link_admin_command "$home_dir" codex; then
+    fail "Codex CLI installer did not put codex on $admin_user PATH"
   fi
 
-  log "installing Codex CLI with npm"
-  npm install -g @openai/codex
-  codex --version >/dev/null
+  run_as_admin "$home_dir" 'codex --version' >/dev/null
 }
 
 install_grok_cli() {
   local home_dir grok_bin
 
-  home_dir="$(getent passwd "$admin_user" | cut -d: -f6)"
+  home_dir="$(admin_home_dir)"
   grok_bin="$home_dir/.grok/bin/grok"
 
   if [[ -x "$grok_bin" ]]; then
@@ -824,6 +945,10 @@ install_grok_cli() {
 }
 
 remove_legacy_third_party_grok_cli() {
+  if ! command_exists npm; then
+    return 0
+  fi
+
   if npm list -g @vibe-kit/grok-cli >/dev/null 2>&1; then
     log "removing legacy third-party Grok CLI npm package"
     npm uninstall -g @vibe-kit/grok-cli || warn "failed to remove @vibe-kit/grok-cli"
@@ -870,7 +995,112 @@ install_agent_clis_if_requested() {
   install_grok_cli
   install_github_cli
   install_agent_auth_helper
+  install_agent_cli_update_timer
   print_agent_cli_versions
+}
+
+install_agent_cli_update_timer() {
+  local home_dir
+
+  home_dir="$(admin_home_dir)"
+  install -d -m 0755 /usr/local/sbin
+
+  {
+    cat <<'AGENT_CLI_UPDATE_HEAD'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+AGENT_CLI_UPDATE_HEAD
+    printf 'admin_user=%q\n' "$admin_user"
+    printf 'home_dir=%q\n' "$home_dir"
+    cat <<'AGENT_CLI_UPDATE_BODY'
+
+run_as_admin() {
+  sudo -H -u "$admin_user" env HOME="$home_dir" SHELL=/bin/bash bash -lc "$1"
+}
+
+admin_command_path() {
+  local command_name="$1"
+  local candidate
+
+  case "$command_name" in
+    codex)
+      for candidate in "$home_dir/.codex/bin/codex" "$home_dir/.local/bin/codex" "$home_dir/bin/codex"; do
+        if [[ -x "$candidate" ]]; then
+          printf '%s\n' "$candidate"
+          return 0
+        fi
+      done
+      ;;
+    grok | agent)
+      candidate="$home_dir/.grok/bin/$command_name"
+      if [[ -x "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+      ;;
+  esac
+
+  run_as_admin "command -v $(printf '%q' "$command_name")" 2>/dev/null || true
+}
+
+link_admin_command() {
+  local command_name="$1"
+  local command_path
+
+  command_path="$(admin_command_path "$command_name")"
+  if [[ -z "$command_path" || ! -x "$command_path" ]]; then
+    return 1
+  fi
+
+  install -d -m 0755 /usr/local/bin
+  ln -sf "$command_path" "/usr/local/bin/$command_name"
+}
+
+run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
+link_admin_command codex
+
+if run_as_admin 'command -v grok >/dev/null 2>&1'; then
+  run_as_admin 'grok update'
+elif [[ -x "$home_dir/.grok/bin/grok" ]]; then
+  run_as_admin "$(printf '%q' "$home_dir/.grok/bin/grok") update"
+else
+  run_as_admin 'curl -fsSL https://x.ai/cli/install.sh | bash'
+fi
+
+link_admin_command grok || true
+link_admin_command agent || true
+AGENT_CLI_UPDATE_BODY
+  } >/usr/local/sbin/vps-agent-cli-update
+
+  chmod 755 /usr/local/sbin/vps-agent-cli-update
+
+  cat >/etc/systemd/system/vps-agent-cli-update.service <<'AGENT_CLI_UPDATE_SERVICE'
+[Unit]
+Description=Update agent CLIs managed by vps-bootstrap
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vps-agent-cli-update
+AGENT_CLI_UPDATE_SERVICE
+
+  cat >/etc/systemd/system/vps-agent-cli-update.timer <<'AGENT_CLI_UPDATE_TIMER'
+[Unit]
+Description=Run vps-bootstrap agent CLI updates every two days
+
+[Timer]
+OnBootSec=30min
+OnUnitActiveSec=2d
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target
+AGENT_CLI_UPDATE_TIMER
+
+  systemctl daemon-reload
+  systemctl enable --now vps-agent-cli-update.timer
 }
 
 install_agent_auth_helper() {

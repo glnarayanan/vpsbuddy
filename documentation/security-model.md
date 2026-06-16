@@ -12,6 +12,8 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 - Unsolicited inbound traffic is denied by the host firewall.
 - The admin user has scoped passwordless sudo by default so common agentic operations can work without broad root access.
 - Codex CLI, Grok CLI, and GitHub CLI are installed by default, but authentication is deferred to the post-setup `vps-agent-auth` helper.
+- Codex and Grok are updated every two days by `vps-agent-cli-update.timer`.
+- OS packages are updated every two weeks by `vps-os-update.timer`; apt hosts also receive fourteen-day `unattended-upgrades` periodic configuration.
 
 ## Phased Rollback Protection
 
@@ -34,6 +36,12 @@ The bootstrap script does not accept, upload, or store raw agent CLI tokens or A
 - GitHub CLI auth through `gh auth login --hostname github.com --git-protocol ssh`.
 
 The admin user receives scoped passwordless sudo by default for package, service, log, firewall, deployment, and agent-tool operations. Use `--full-sudo` only when a server intentionally needs broad `NOPASSWD:ALL`.
+
+## Update Automation
+
+`vps-agent-cli-update.timer` runs every two days with persistence across reboots. It reruns OpenAI's Codex installer in non-interactive mode and runs `grok update` as the admin user.
+
+`vps-os-update.timer` runs every two weeks with persistence across reboots. It uses `unattended-upgrade -d` on apt hosts when available, `dnf -y upgrade` on dnf hosts, and `yum -y update` on yum hosts.
 
 ## Tailscale SSH
 

@@ -11,6 +11,8 @@ The tool:
 - Disables root/password SSH only after that verification succeeds.
 - Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default for hosted applications.
 - Installs Codex CLI, Grok CLI, and GitHub CLI by default.
+- Keeps Codex and Grok current with a two-day systemd update timer.
+- Installs OS updates every two weeks with an unattended systemd update timer.
 - Supports Ubuntu/Debian through apt and Fedora/RHEL-family hosts through dnf/yum.
 
 ## Usage
@@ -43,9 +45,17 @@ Use `--no-web` or `--web=false` for private-only servers where public HTTP/HTTPS
 
 The bootstrap installs these developer tools by default:
 
-- Codex CLI via `npm i -g @openai/codex`.
+- Codex CLI via OpenAI's official installer, `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh`, run as the admin user.
 - Grok CLI via xAI's official installer, `curl -fsSL https://x.ai/cli/install.sh | bash`, run as the admin user.
 - GitHub CLI through GitHub's signed apt or rpm repositories.
+
+The bootstrap also installs `vps-agent-cli-update.service` and `vps-agent-cli-update.timer`. The timer runs every two days and:
+
+- Reruns `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh` as the admin user.
+- Runs `grok update` as the admin user.
+- Refreshes `/usr/local/bin/codex`, `/usr/local/bin/grok`, and `/usr/local/bin/agent` symlinks when those user-level binaries exist.
+
+OS updates are handled by `vps-os-update.service` and `vps-os-update.timer`, which run every two weeks. On apt systems, `unattended-upgrades` is configured with a fourteen-day periodic cadence; the managed timer also runs `unattended-upgrade -d`. On dnf/yum systems, the timer runs package-manager upgrades non-interactively.
 
 Skip them when building a minimal server:
 

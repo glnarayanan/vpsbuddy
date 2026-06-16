@@ -179,8 +179,7 @@ test_remote_script_contains_supported_distros_and_tailscale_flow() {
   assert_contains "remote script supports apt" "$script" "apt-get update"
   assert_contains "remote script supports dnf" "$script" "dnf makecache"
   assert_contains "remote script supports yum" "$script" "yum makecache"
-  assert_contains "remote script supports dnf automatic install timer" "$script" "dnf-automatic-install.timer"
-  assert_contains "remote script supports dnf automatic fallback timer" "$script" "dnf-automatic.timer"
+  assert_contains "remote script leaves update cadence to managed timer" "$script" "vps-os-update.timer controls the two-week update cadence"
   assert_contains "remote script installs tailscale officially" "$script" "https://tailscale.com/install.sh"
   assert_contains "remote script uses interactive tailscale up" "$script" "tailscale up --hostname"
   assert_contains "remote script validates sshd" "$script" "sshd -t"
@@ -190,7 +189,8 @@ test_remote_script_installs_agent_clis_and_supports_auth_modes() {
   local script
   script="$(generate_remote_script)"
 
-  assert_contains "remote script installs codex cli" "$script" "npm install -g @openai/codex"
+  assert_contains "remote script installs codex cli with official installer" "$script" "https://chatgpt.com/codex/install.sh"
+  assert_contains "remote script installs codex non-interactively" "$script" "CODEX_NON_INTERACTIVE=1 sh"
   assert_contains "remote script installs official grok cli" "$script" "https://x.ai/cli/install.sh | bash"
   assert_contains "remote script installs grok cli as admin user" "$script" 'sudo -H -u "$admin_user"'
   assert_contains "remote script removes third-party grok package" "$script" "npm uninstall -g @vibe-kit/grok-cli"
@@ -200,7 +200,24 @@ test_remote_script_installs_agent_clis_and_supports_auth_modes() {
   assert_contains "remote script records grok version" "$script" "VPS_BOOTSTRAP_GROK_VERSION="
   assert_contains "remote script records github cli version" "$script" "VPS_BOOTSTRAP_GH_VERSION="
   assert_not_contains "remote script does not install third-party grok package" "$script" "npm install -g @vibe-kit/grok-cli"
+  assert_not_contains "remote script does not install codex with npm" "$script" "npm install -g @openai/codex"
   assert_not_contains "remote script does not install claude" "$script" "claude-code"
+}
+
+test_remote_script_installs_update_timers() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "remote script installs agent cli updater" "$script" "/usr/local/sbin/vps-agent-cli-update"
+  assert_contains "agent updater reruns codex installer" "$script" "https://chatgpt.com/codex/install.sh"
+  assert_contains "agent updater runs grok update" "$script" "grok update"
+  assert_contains "agent updater installs two day timer" "$script" "OnUnitActiveSec=2d"
+  assert_contains "remote script installs os updater" "$script" "/usr/local/sbin/vps-os-update"
+  assert_contains "os updater runs apt unattended upgrade" "$script" "unattended-upgrade -d"
+  assert_contains "os updater supports dnf upgrade" "$script" "dnf -y upgrade"
+  assert_contains "os updater supports yum update" "$script" "yum -y update"
+  assert_contains "os updater installs two week timer" "$script" "OnUnitActiveSec=14d"
+  assert_contains "apt periodic unattended upgrade is every fourteen days" "$script" 'APT::Periodic::Unattended-Upgrade "14";'
 }
 
 test_agent_auth_helper_uses_native_auth_only() {
@@ -365,6 +382,7 @@ test_ufw_rules_keep_public_ssh_until_harden_phase
 test_firewalld_rules_remove_public_ssh_and_keep_web
 test_remote_script_contains_supported_distros_and_tailscale_flow
 test_remote_script_installs_agent_clis_and_supports_auth_modes
+test_remote_script_installs_update_timers
 test_agent_auth_helper_uses_native_auth_only
 test_remote_script_installs_agent_auth_helper
 test_sudoers_policy_is_scoped_by_default
