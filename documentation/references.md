@@ -7,15 +7,15 @@ These are the upstream references used for install and auth behavior.
 - OpenAI Codex CLI setup: https://developers.openai.com/codex/cli
 - OpenAI API key safety: https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety
 
-Codex is installed with `npm i -g @openai/codex`. Post-setup auth uses `codex login --device-auth` through `vps-agent-auth`.
+Codex is installed with `npm i -g @openai/codex`. Post-setup auth uses `codex login` through `vps-agent-auth`.
 
-## Claude Code CLI
+## Grok CLI
 
-- Claude Code setup: https://code.claude.com/docs/en/setup
-- Claude Code authentication: https://code.claude.com/docs/en/iam
-- Claude Code settings and env vars: https://code.claude.com/docs/en/settings
+- Grok Build CLI: https://x.ai/cli
+- Grok Build docs: https://docs.x.ai/build/overview
+- xAI API docs: https://docs.x.ai/
 
-Claude Code is installed from Anthropic's signed apt or rpm repositories. Post-setup auth uses `claude auth login` through `vps-agent-auth`.
+Grok CLI is installed with xAI's official `curl -fsSL https://x.ai/cli/install.sh | bash` installer, run as the admin user so its files live under that user's `~/.grok` directory. Post-setup auth uses `grok login`; non-browser environments can set `XAI_API_KEY`. `vps-agent-auth` does not accept or store API keys.
 
 ## GitHub CLI
 

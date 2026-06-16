@@ -10,7 +10,7 @@ The tool:
 - Verifies the new user can SSH over the Tailnet and run sudo before lock-down.
 - Disables root/password SSH only after that verification succeeds.
 - Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default for hosted applications.
-- Installs Codex CLI, Claude Code CLI, and GitHub CLI by default.
+- Installs Codex CLI, Grok CLI, and GitHub CLI by default.
 - Supports Ubuntu/Debian through apt and Fedora/RHEL-family hosts through dnf/yum.
 
 ## Usage
@@ -44,7 +44,7 @@ Use `--no-web` or `--web=false` for private-only servers where public HTTP/HTTPS
 The bootstrap installs these developer tools by default:
 
 - Codex CLI via `npm i -g @openai/codex`.
-- Claude Code CLI through Anthropic's signed apt or rpm repositories.
+- Grok CLI via xAI's official installer, `curl -fsSL https://x.ai/cli/install.sh | bash`, run as the admin user.
 - GitHub CLI through GitHub's signed apt or rpm repositories.
 
 Skip them when building a minimal server:
@@ -60,13 +60,13 @@ vps-agent-auth --all
 vps-agent-auth --status
 ```
 
-The helper starts each tool's native interactive auth flow:
+The helper starts native interactive auth where available and prints setup checks for API-key based tools:
 
-- `codex login --device-auth`
-- `claude auth login`
+- `codex login`
+- `grok login`, or `XAI_API_KEY` in non-browser environments
 - `gh auth login --hostname github.com --git-protocol ssh`
 
-The bootstrap script does not accept, upload, or store raw agent CLI tokens.
+The bootstrap script does not accept, upload, or store raw agent CLI tokens or API keys.
 
 ## Sudo Policy
 

@@ -11,7 +11,7 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 - Public TCP 80/443 remain open by default for hosted web applications.
 - Unsolicited inbound traffic is denied by the host firewall.
 - The admin user has scoped passwordless sudo by default so common agentic operations can work without broad root access.
-- Codex CLI, Claude Code CLI, and GitHub CLI are installed by default, but authentication is deferred to the post-setup `vps-agent-auth` helper.
+- Codex CLI, Grok CLI, and GitHub CLI are installed by default, but authentication is deferred to the post-setup `vps-agent-auth` helper.
 
 ## Phased Rollback Protection
 
@@ -25,12 +25,12 @@ The harden phase also writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.
 
 ## Developer CLI Credentials
 
-`vps-agent-auth` runs the CLIs as the admin user after bootstrap is complete.
+`vps-agent-auth` runs native auth flows where available and prints setup checks for API-key based tools after bootstrap is complete.
 
-The bootstrap script does not accept, upload, or store raw agent CLI tokens. Each CLI handles its own auth state through native commands:
+The bootstrap script does not accept, upload, or store raw agent CLI tokens or API keys. Each CLI handles its own auth state or configuration:
 
-- Codex auth through `codex login --device-auth`.
-- Claude Code auth through `claude auth login`.
+- Codex auth through `codex login`.
+- Grok auth through `grok login`, or `XAI_API_KEY` in non-browser environments.
 - GitHub CLI auth through `gh auth login --hostname github.com --git-protocol ssh`.
 
 The admin user receives scoped passwordless sudo by default for package, service, log, firewall, deployment, and agent-tool operations. Use `--full-sudo` only when a server intentionally needs broad `NOPASSWD:ALL`.

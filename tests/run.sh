@@ -191,13 +191,16 @@ test_remote_script_installs_agent_clis_and_supports_auth_modes() {
   script="$(generate_remote_script)"
 
   assert_contains "remote script installs codex cli" "$script" "npm install -g @openai/codex"
-  assert_contains "remote script installs claude apt repo" "$script" "https://downloads.claude.ai/claude-code/apt/stable"
-  assert_contains "remote script installs claude rpm repo" "$script" "https://downloads.claude.ai/claude-code/rpm/stable"
+  assert_contains "remote script installs official grok cli" "$script" "https://x.ai/cli/install.sh | bash"
+  assert_contains "remote script installs grok cli as admin user" "$script" 'sudo -H -u "$admin_user"'
+  assert_contains "remote script removes third-party grok package" "$script" "npm uninstall -g @vibe-kit/grok-cli"
   assert_contains "remote script installs github cli apt repo" "$script" "https://cli.github.com/packages stable main"
   assert_contains "remote script installs github cli rpm repo" "$script" "https://cli.github.com/packages/rpm/gh-cli.repo"
   assert_contains "remote script records codex version" "$script" "VPS_BOOTSTRAP_CODEX_VERSION="
-  assert_contains "remote script records claude version" "$script" "VPS_BOOTSTRAP_CLAUDE_VERSION="
+  assert_contains "remote script records grok version" "$script" "VPS_BOOTSTRAP_GROK_VERSION="
   assert_contains "remote script records github cli version" "$script" "VPS_BOOTSTRAP_GH_VERSION="
+  assert_not_contains "remote script does not install third-party grok package" "$script" "npm install -g @vibe-kit/grok-cli"
+  assert_not_contains "remote script does not install claude" "$script" "claude-code"
 }
 
 test_agent_auth_helper_uses_native_auth_only() {
@@ -206,16 +209,20 @@ test_agent_auth_helper_uses_native_auth_only() {
 
   assert_contains "helper supports all mode" "$helper" "--all"
   assert_contains "helper supports status mode" "$helper" "--status"
-  assert_contains "helper uses codex device auth" "$helper" "codex login --device-auth"
-  assert_contains "helper uses claude native auth" "$helper" "claude auth login"
+  assert_contains "helper uses codex native auth" "$helper" "codex login"
+  assert_contains "helper supports grok setup" "$helper" "--grok"
+  assert_contains "helper runs grok login" "$helper" "grok_bin\" login"
+  assert_contains "helper documents xai api key env" "$helper" "XAI_API_KEY"
+  assert_contains "helper checks grok auth file" "$helper" ".grok/auth.json"
   assert_contains "helper uses github native auth" "$helper" "gh auth login --hostname github.com --git-protocol ssh"
   assert_contains "helper checks codex status" "$helper" "codex login status"
-  assert_contains "helper checks claude status" "$helper" "claude auth status"
+  assert_contains "helper checks grok status" "$helper" "status_grok"
   assert_contains "helper checks github status" "$helper" "gh auth status --hostname github.com"
   assert_not_contains "helper does not use codex api key login" "$helper" "codex login --with-api-key"
   assert_not_contains "helper does not use token login" "$helper" "gh auth login --with-token"
   assert_not_contains "helper does not reference auth env file" "$helper" "agent-cli.env"
-  assert_not_contains "helper does not write claude settings" "$helper" ".claude/settings.json"
+  assert_not_contains "helper does not reference claude" "$helper" "claude"
+  assert_not_contains "helper does not use third-party grok settings" "$helper" "user-settings.json"
 }
 
 test_remote_script_installs_agent_auth_helper() {
@@ -236,6 +243,8 @@ test_sudoers_policy_is_scoped_by_default() {
   assert_contains "scoped sudo allows systemctl" "$policy" "/usr/bin/systemctl"
   assert_contains "scoped sudo allows journalctl" "$policy" "/usr/bin/journalctl"
   assert_contains "scoped sudo allows npm global installs" "$policy" "/usr/bin/npm"
+  assert_contains "scoped sudo allows grok cli" "$policy" "/usr/bin/grok"
+  assert_not_contains "scoped sudo avoids claude cli" "$policy" "/usr/bin/claude"
   assert_not_contains "scoped sudo avoids all access" "$policy" "NOPASSWD:ALL"
 }
 
@@ -295,6 +304,31 @@ test_parse_prepare_output_extracts_tailnet_ip() {
   assert_eq "parse prepare tailnet ip" "100.64.0.25" "$ip"
 }
 
+test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
+  local prelude public_key loaded_public_key loaded_hostname
+  reset_config
+  VPS_ADMIN_USER="deploy"
+  VPS_HOSTNAME=""
+  public_key="$(read_public_key tests/fixtures/id_ed25519.pub)"
+  prelude="$(generate_remote_config_prelude prepare "$public_key")"
+
+  loaded_public_key="$(
+    public_key=""
+    requested_hostname="not-empty"
+    eval "$prelude"
+    printf '%s' "$public_key"
+  )"
+  loaded_hostname="$(
+    requested_hostname="not-empty"
+    eval "$prelude"
+    printf '%s' "$requested_hostname"
+  )"
+
+  assert_eq "remote config preserves spaced public key" "$public_key" "$loaded_public_key"
+  assert_eq "remote config preserves empty hostname" "" "$loaded_hostname"
+  assert_contains "remote config sets phase" "$prelude" "phase=prepare"
+}
+
 test_parse_args_sets_default_user() {
   reset_config
   parse_args --host example.test
@@ -339,6 +373,7 @@ test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy
 test_dry_run_prints_rollback_safe_phase_ordering
 test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip
 test_parse_prepare_output_extracts_tailnet_ip
+test_remote_config_prelude_preserves_public_key_and_empty_hostname
 test_parse_args_sets_default_user
 test_parse_args_requires_host
 test_remote_script_prepends_missing_sshd_include

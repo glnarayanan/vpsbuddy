@@ -32,8 +32,8 @@ Options:
   --identity <path>             Private key used to verify Tailnet login. Default: pubkey without .pub.
   --hostname <name>             Hostname to set on the server and use for Tailscale.
   --enable-tailscale-ssh        Enable Tailscale SSH after joining the Tailnet.
-  --install-agent-clis          Install Codex, Claude Code, and GitHub CLIs. Default.
-  --skip-agent-clis             Skip Codex, Claude Code, and GitHub CLI installation.
+  --install-agent-clis          Install Codex, Grok, and GitHub CLIs. Default.
+  --skip-agent-clis             Skip Codex, Grok, and GitHub CLI installation.
   --full-sudo                   Use NOPASSWD:ALL instead of scoped passwordless sudo.
   --web                         Keep public TCP 80/443 open. Default.
   --web=false                   Disable public TCP 80/443.
@@ -301,7 +301,7 @@ Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
 Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
 Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
 Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
-Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/claude, /usr/local/bin/claude, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
+Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
 $admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
 SUDOERS_POLICY
 }
@@ -314,10 +314,11 @@ set -Eeuo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  vps-agent-auth [--all] [--status] [--codex] [--claude] [--github]
+  vps-agent-auth [--all] [--status] [--codex] [--grok] [--github]
 
-Runs native interactive authentication for installed agent CLIs. No tokens are
-accepted, copied, or stored by this helper; each CLI manages its own auth state.
+Runs native interactive authentication where available and prints setup checks
+for CLIs that use API-key based configuration. No tokens are accepted, copied,
+or stored by this helper.
 USAGE
 }
 
@@ -329,8 +330,41 @@ status_codex() {
   have codex && codex login status
 }
 
-status_claude() {
-  have claude && claude auth status --text
+grok_command() {
+  if command -v grok >/dev/null 2>&1; then
+    command -v grok
+    return 0
+  fi
+
+  if [[ -x "${HOME}/.grok/bin/grok" ]]; then
+    printf '%s\n' "${HOME}/.grok/bin/grok"
+    return 0
+  fi
+
+  return 1
+}
+
+status_grok() {
+  local grok_bin
+
+  if ! grok_bin="$(grok_command)"; then
+    printf 'grok is not installed\n' >&2
+    return 1
+  fi
+
+  "$grok_bin" --version
+  if [[ -n "${XAI_API_KEY:-}" ]]; then
+    printf 'XAI_API_KEY is set in this shell.\n'
+    return 0
+  fi
+
+  if [[ -r "${HOME}/.grok/auth.json" ]]; then
+    printf '~/.grok/auth.json exists from Grok login.\n'
+    return 0
+  fi
+
+  printf 'Grok is not authenticated. Run grok login, or set XAI_API_KEY in non-browser environments.\n' >&2
+  return 1
 }
 
 status_github() {
@@ -343,16 +377,23 @@ auth_codex() {
     return 1
   fi
 
-  codex login --device-auth
+  codex login
 }
 
-auth_claude() {
-  if ! have claude; then
-    printf 'claude is not installed\n' >&2
+auth_grok() {
+  local grok_bin
+
+  if ! grok_bin="$(grok_command)"; then
+    printf 'grok is not installed\n' >&2
     return 1
   fi
 
-  claude auth login
+  if [[ -n "${XAI_API_KEY:-}" ]]; then
+    printf 'XAI_API_KEY is already set; Grok will use API-key auth in this shell.\n'
+    return 0
+  fi
+
+  "$grok_bin" login
 }
 
 auth_github() {
@@ -367,15 +408,15 @@ auth_github() {
 run_status() {
   printf '\n== Codex ==\n'
   status_codex || true
-  printf '\n== Claude Code ==\n'
-  status_claude || true
+  printf '\n== Grok CLI ==\n'
+  status_grok || true
   printf '\n== GitHub CLI ==\n'
   status_github || true
 }
 
 run_all() {
   auth_codex
-  auth_claude
+  auth_grok
   auth_github
 }
 
@@ -395,8 +436,8 @@ while [[ "$#" -gt 0 ]]; do
     --codex)
       auth_codex
       ;;
-    --claude)
-      auth_claude
+    --grok)
+      auth_grok
       ;;
     --github)
       auth_github
@@ -488,14 +529,14 @@ generate_remote_script() {
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-phase="${1:?phase required}"
-admin_user="${2:?admin user required}"
-public_key="${3:?public key required}"
-requested_hostname="${4:-}"
-enable_tailscale_ssh="${5:-0}"
-web_enabled="${6:-1}"
-install_agent_clis="${7:-1}"
-full_sudo="${8:-0}"
+: "${phase:?phase required}"
+: "${admin_user:?admin user required}"
+: "${public_key:?public key required}"
+requested_hostname="${requested_hostname:-}"
+enable_tailscale_ssh="${enable_tailscale_ssh:-0}"
+web_enabled="${web_enabled:-1}"
+install_agent_clis="${install_agent_clis:-1}"
+full_sudo="${full_sudo:-0}"
 
 OS_ID=""
 OS_LIKE=""
@@ -713,7 +754,7 @@ Cmnd_Alias VPS_SVC = /usr/bin/systemctl, /bin/systemctl
 Cmnd_Alias VPS_LOG = /usr/bin/journalctl, /bin/journalctl
 Cmnd_Alias VPS_FIREWALL = /usr/sbin/ufw, /usr/bin/firewall-cmd, /usr/sbin/firewall-cmd
 Cmnd_Alias VPS_DEPLOY = /usr/bin/install, /usr/bin/chown, /usr/bin/chmod, /usr/bin/mkdir, /usr/bin/rsync
-Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/claude, /usr/local/bin/claude, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
+Cmnd_Alias VPS_AGENT_TOOLS = /usr/bin/npm, /usr/local/bin/npm, /usr/bin/codex, /usr/local/bin/codex, /usr/bin/grok, /usr/local/bin/grok, /usr/bin/gh, /usr/local/bin/gh, /usr/local/bin/vps-agent-auth
 $admin_user ALL=(ALL) NOPASSWD: VPS_PKG, VPS_SVC, VPS_LOG, VPS_FIREWALL, VPS_DEPLOY, VPS_AGENT_TOOLS
 SUDOERS_POLICY
 }
@@ -756,39 +797,38 @@ install_codex_cli() {
   codex --version >/dev/null
 }
 
-install_claude_code_cli() {
-  if command_exists claude; then
-    log "Claude Code CLI is already installed"
-    return 0
+install_grok_cli() {
+  local home_dir grok_bin
+
+  home_dir="$(getent passwd "$admin_user" | cut -d: -f6)"
+  grok_bin="$home_dir/.grok/bin/grok"
+
+  if [[ -x "$grok_bin" ]]; then
+    log "Grok CLI is already installed for $admin_user"
+  else
+    log "installing official Grok CLI for $admin_user"
+    sudo -H -u "$admin_user" env SHELL=/bin/bash bash -c 'curl -fsSL https://x.ai/cli/install.sh | bash'
   fi
 
-  log "installing Claude Code CLI"
-
-  if [[ "$PKG_BACKEND" == "apt" ]]; then
-    install -d -m 0755 /etc/apt/keyrings
-    curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o /etc/apt/keyrings/claude-code.asc
-    gpg --show-keys /etc/apt/keyrings/claude-code.asc | grep -q '31DD DE24 DDFA B679 F42D  7BD2 BAA9 29FF 1A7E CACE' ||
-      warn "Claude Code signing key fingerprint could not be verified from gpg output"
-    printf '%s\n' \
-      'deb [signed-by=/etc/apt/keyrings/claude-code.asc] https://downloads.claude.ai/claude-code/apt/stable stable main' \
-      >/etc/apt/sources.list.d/claude-code.list
-    apt-get update
-    apt-get install -y claude-code
-    claude --version >/dev/null
-    return 0
+  if [[ ! -x "$grok_bin" ]]; then
+    fail "Grok CLI installer did not create $grok_bin"
   fi
 
-  cat >/etc/yum.repos.d/claude-code.repo <<'CLAUDE_REPO'
-[claude-code]
-name=Claude Code
-baseurl=https://downloads.claude.ai/claude-code/rpm/stable
-enabled=1
-gpgcheck=1
-gpgkey=https://downloads.claude.ai/keys/claude-code.asc
-CLAUDE_REPO
+  install -d -m 0755 /usr/local/bin
+  ln -sf "$grok_bin" /usr/local/bin/grok
+  if [[ -x "$home_dir/.grok/bin/agent" ]]; then
+    ln -sf "$home_dir/.grok/bin/agent" /usr/local/bin/agent
+  fi
 
-  "$PKG_BIN" install -y claude-code
-  claude --version >/dev/null
+  sudo -H -u "$admin_user" "$grok_bin" --version >/dev/null
+}
+
+remove_legacy_third_party_grok_cli() {
+  if npm list -g @vibe-kit/grok-cli >/dev/null 2>&1; then
+    log "removing legacy third-party Grok CLI npm package"
+    npm uninstall -g @vibe-kit/grok-cli || warn "failed to remove @vibe-kit/grok-cli"
+    return 0
+  fi
 }
 
 install_github_cli() {
@@ -826,7 +866,8 @@ install_agent_clis_if_requested() {
   fi
 
   install_codex_cli
-  install_claude_code_cli
+  remove_legacy_third_party_grok_cli
+  install_grok_cli
   install_github_cli
   install_agent_auth_helper
   print_agent_cli_versions
@@ -842,10 +883,11 @@ set -Eeuo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  vps-agent-auth [--all] [--status] [--codex] [--claude] [--github]
+  vps-agent-auth [--all] [--status] [--codex] [--grok] [--github]
 
-Runs native interactive authentication for installed agent CLIs. No tokens are
-accepted, copied, or stored by this helper; each CLI manages its own auth state.
+Runs native interactive authentication where available and prints setup checks
+for CLIs that use API-key based configuration. No tokens are accepted, copied,
+or stored by this helper.
 USAGE
 }
 
@@ -857,8 +899,41 @@ status_codex() {
   have codex && codex login status
 }
 
-status_claude() {
-  have claude && claude auth status --text
+grok_command() {
+  if command -v grok >/dev/null 2>&1; then
+    command -v grok
+    return 0
+  fi
+
+  if [[ -x "${HOME}/.grok/bin/grok" ]]; then
+    printf '%s\n' "${HOME}/.grok/bin/grok"
+    return 0
+  fi
+
+  return 1
+}
+
+status_grok() {
+  local grok_bin
+
+  if ! grok_bin="$(grok_command)"; then
+    printf 'grok is not installed\n' >&2
+    return 1
+  fi
+
+  "$grok_bin" --version
+  if [[ -n "${XAI_API_KEY:-}" ]]; then
+    printf 'XAI_API_KEY is set in this shell.\n'
+    return 0
+  fi
+
+  if [[ -r "${HOME}/.grok/auth.json" ]]; then
+    printf '~/.grok/auth.json exists from Grok login.\n'
+    return 0
+  fi
+
+  printf 'Grok is not authenticated. Run grok login, or set XAI_API_KEY in non-browser environments.\n' >&2
+  return 1
 }
 
 status_github() {
@@ -871,16 +946,23 @@ auth_codex() {
     return 1
   fi
 
-  codex login --device-auth
+  codex login
 }
 
-auth_claude() {
-  if ! have claude; then
-    printf 'claude is not installed\n' >&2
+auth_grok() {
+  local grok_bin
+
+  if ! grok_bin="$(grok_command)"; then
+    printf 'grok is not installed\n' >&2
     return 1
   fi
 
-  claude auth login
+  if [[ -n "${XAI_API_KEY:-}" ]]; then
+    printf 'XAI_API_KEY is already set; Grok will use API-key auth in this shell.\n'
+    return 0
+  fi
+
+  "$grok_bin" login
 }
 
 auth_github() {
@@ -895,15 +977,15 @@ auth_github() {
 run_status() {
   printf '\n== Codex ==\n'
   status_codex || true
-  printf '\n== Claude Code ==\n'
-  status_claude || true
+  printf '\n== Grok CLI ==\n'
+  status_grok || true
   printf '\n== GitHub CLI ==\n'
   status_github || true
 }
 
 run_all() {
   auth_codex
-  auth_claude
+  auth_grok
   auth_github
 }
 
@@ -923,8 +1005,8 @@ while [[ "$#" -gt 0 ]]; do
     --codex)
       auth_codex
       ;;
-    --claude)
-      auth_claude
+    --grok)
+      auth_grok
       ;;
     --github)
       auth_github
@@ -946,7 +1028,7 @@ AGENT_AUTH_HELPER
 
 print_agent_cli_versions() {
   printf 'VPS_BOOTSTRAP_CODEX_VERSION=%s\n' "$(codex --version 2>/dev/null | head -n 1 || true)"
-  printf 'VPS_BOOTSTRAP_CLAUDE_VERSION=%s\n' "$(claude --version 2>/dev/null | head -n 1 || true)"
+  printf 'VPS_BOOTSTRAP_GROK_VERSION=%s\n' "$(grok --version 2>/dev/null | head -n 1 || true)"
   printf 'VPS_BOOTSTRAP_GH_VERSION=%s\n' "$(gh --version 2>/dev/null | head -n 1 || true)"
 }
 
@@ -1211,7 +1293,7 @@ REMOTE_SCRIPT
 build_root_prepare_command() {
   local host="$1"
 
-  printf 'ssh -tt -o StrictHostKeyChecking=accept-new %s %s -- prepare <admin-user> <public-key> <hostname> <tailscale-ssh> <web> <install-agent-clis> <full-sudo>' \
+  printf 'stream config + script | ssh -tt -o StrictHostKeyChecking=accept-new %s %s' \
     "$(shell_quote "root@$host")" \
     "$(shell_quote "bash -s")"
 }
@@ -1232,10 +1314,24 @@ build_admin_harden_command() {
   local tailnet_ip="$2"
   local identity="$3"
 
-  printf 'ssh -tt -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new %s %s -- harden <admin-user> <public-key> <hostname> <tailscale-ssh> <web> <install-agent-clis> <full-sudo>' \
+  printf 'stream config + script | ssh -tt -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new %s %s' \
     "$(shell_quote "$identity")" \
     "$(shell_quote "$admin_user@$tailnet_ip")" \
     "$(shell_quote "sudo bash -s")"
+}
+
+generate_remote_config_prelude() {
+  local phase="$1"
+  local public_key="$2"
+
+  printf 'phase=%q\n' "$phase"
+  printf 'admin_user=%q\n' "$VPS_ADMIN_USER"
+  printf 'public_key=%q\n' "$public_key"
+  printf 'requested_hostname=%q\n' "$VPS_HOSTNAME"
+  printf 'enable_tailscale_ssh=%q\n' "$VPS_ENABLE_TAILSCALE_SSH"
+  printf 'web_enabled=%q\n' "$VPS_WEB"
+  printf 'install_agent_clis=%q\n' "$VPS_INSTALL_AGENT_CLIS"
+  printf 'full_sudo=%q\n' "$VPS_FULL_SUDO"
 }
 
 parse_prepare_tailnet_ip() {
@@ -1250,16 +1346,12 @@ parse_prepare_tailnet_ip() {
 run_remote_prepare() {
   local public_key="$1"
 
-  generate_remote_script |
+  {
+    generate_remote_config_prelude prepare "$public_key"
+    generate_remote_script
+  } |
     ssh -tt -o StrictHostKeyChecking=accept-new "root@$VPS_HOST" 'bash -s' -- \
-      prepare \
-      "$VPS_ADMIN_USER" \
-      "$public_key" \
-      "$VPS_HOSTNAME" \
-      "$VPS_ENABLE_TAILSCALE_SSH" \
-      "$VPS_WEB" \
-      "$VPS_INSTALL_AGENT_CLIS" \
-      "$VPS_FULL_SUDO"
+      prepare
 }
 
 verify_admin_login() {
@@ -1278,7 +1370,10 @@ run_remote_harden() {
   local tailnet_ip="$1"
   local public_key="$2"
 
-  generate_remote_script |
+  {
+    generate_remote_config_prelude harden "$public_key"
+    generate_remote_script
+  } |
     ssh \
       -tt \
       -i "$VPS_IDENTITY" \
@@ -1287,14 +1382,7 @@ run_remote_harden() {
       -o StrictHostKeyChecking=accept-new \
       "$VPS_ADMIN_USER@$tailnet_ip" \
       'sudo bash -s' -- \
-      harden \
-      "$VPS_ADMIN_USER" \
-      "$public_key" \
-      "$VPS_HOSTNAME" \
-      "$VPS_ENABLE_TAILSCALE_SSH" \
-      "$VPS_WEB" \
-      "$VPS_INSTALL_AGENT_CLIS" \
-      "$VPS_FULL_SUDO"
+      harden
 }
 
 run_dry_run() {
