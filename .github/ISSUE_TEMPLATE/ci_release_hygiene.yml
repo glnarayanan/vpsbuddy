@@ -1,0 +1,39 @@
+name: CI or Release Hygiene
+description: Track maintenance work for workflows, checks, dependency updates, or release safety.
+title: "CI: "
+labels:
+  - maintenance
+body:
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Which workflow, check, template, or release safety concern needs attention?
+    validations:
+      required: true
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current Behavior
+      description: Describe the current failure, gap, or confusing behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: target_behavior
+    attributes:
+      label: Target Behavior
+      description: What should happen after this maintenance work lands?
+    validations:
+      required: true
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Relevant Gates
+      options:
+        - label: make check
+        - label: ShellCheck
+        - label: shfmt
+        - label: Prettier
+        - label: actionlint
+        - label: secret scan
+        - label: OpenSSF Scorecard

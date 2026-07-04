@@ -1,0 +1,36 @@
+name: Bug Report
+description: Report a reproducible problem with the VPS bootstrap scripts.
+title: "Bug: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include distro, shell, local OS, and whether this was a dry run.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Provide the exact command shape with secrets redacted.
+      placeholder: |
+        1. Run ...
+        2. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Output
+      description: Paste the smallest useful log excerpt with tokens, hostnames, and private IPs redacted.
+      render: shell
