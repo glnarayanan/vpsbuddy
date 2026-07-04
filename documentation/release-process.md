@@ -34,6 +34,12 @@ Inspect the dry-run plan:
 bin/vps-bootstrap --host 203.0.113.10 --hostname smoke-01 --dry-run
 ```
 
+Run the read-only doctor audit:
+
+```bash
+bin/vps-bootstrap doctor --host 203.0.113.10
+```
+
 Confirm the dry-run communicates:
 
 - Host-key prompt expectations.
@@ -42,6 +48,7 @@ Confirm the dry-run communicates:
 - Tailscale verification before SSH hardening.
 - Final web exposure based on `--web` or `--no-web`.
 - Default bounded sudo policy or explicit `--full-sudo` behavior.
+- Agent CLI installation is skipped unless `--install-agent-clis` is present.
 
 ## Disposable VPS Smoke Test
 
@@ -65,9 +72,14 @@ After the run:
 ```bash
 ssh deploy@<tailscale-ip>
 sudo -n /usr/local/sbin/vps-agent-sudo-check
-systemctl list-timers | grep -E 'vps-agent-cli-update|vps-os-update'
-vps-agent-auth --status
+systemctl list-timers | grep 'vps-os-update'
+bin/vps-bootstrap doctor
+test -r /var/log/vps-agent-actions.log && tail -n 5 /var/log/vps-agent-actions.log
 ```
+
+If the release specifically validates optional agent CLIs, rerun the smoke test
+with `--install-agent-clis`, confirm `vps-agent-cli-update.timer`, and then run
+`vps-agent-auth --status`.
 
 From a non-Tailnet network:
 
@@ -83,8 +95,10 @@ Expected results:
 - TCP 80/443 are open only when web access is enabled.
 - Tailnet SSH works for the admin user.
 - The bounded sudo check succeeds.
-- Update timers are installed.
-- Developer CLI auth is deferred until `vps-agent-auth`.
+- The OS update timer is installed.
+- `doctor` reports expected post-bootstrap state.
+- Helper audit events are written after helper use.
+- Developer CLI auth is deferred until `vps-agent-auth` when agent CLIs are installed.
 
 ## Release Notes
 

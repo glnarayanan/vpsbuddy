@@ -15,6 +15,9 @@ Required before tagging:
 
 - Local `make check` passes.
 - Dry-run output is understandable for the main bootstrap path.
+- `doctor` provides a read-only local and post-bootstrap audit surface.
+- Agent CLIs are opt-in and documented as a supply-chain trust boundary.
+- Root-owned helpers emit JSONL audit events without broadening sudo.
 - Release smoke test is documented and run on at least one fresh apt-family VPS.
 - Security model, threat model, compatibility matrix, and provider firewall
   checklist are current.
@@ -32,7 +35,7 @@ Expected alpha limits:
 
 - Broaden disposable VPS smoke tests across Debian, Ubuntu, Fedora, AlmaLinux,
   and Rocky Linux images.
-- Add clearer dry-run summaries for final firewall and sudo policy.
+- Add clearer dry-run and doctor summaries for final firewall and sudo policy.
 - Add generated-script tests for additional distro edge cases.
 - Document provider-specific host-key retrieval notes where providers expose
   them differently.

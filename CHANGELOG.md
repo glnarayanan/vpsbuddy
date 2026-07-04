@@ -11,11 +11,14 @@ changes, compatibility changes, and smoke-test notes.
 - Public repository documentation and community hygiene files.
 - Alpha roadmap, public threat model, compatibility matrix, release process,
   comparison guide, and FAQ.
+- Read-only `vps-bootstrap doctor` audit mode.
+- Best-effort JSONL audit logging for root-owned `vps-agent-*` helper calls.
 
 ### Changed
 
 - Root documentation now positions the project as a security-first fresh VPS
   bootstrap tool rather than a hosting panel or application orchestrator.
+- Developer CLI installation is opt-in through `--install-agent-clis`.
 
 ## [0.1.0-alpha] - Planned
 
@@ -33,8 +36,12 @@ Expected scope:
 - Public HTTP/HTTPS allowed by default, with `--no-web` for private-only hosts.
 - Bounded passwordless sudo helpers by default, with `--full-sudo` as an
   explicit escape hatch.
-- Codex CLI, Grok CLI, and GitHub CLI installation.
-- Agent CLI and OS update timers.
+- Optional Codex CLI, Grok CLI, and GitHub CLI installation with
+  `--install-agent-clis`.
+- OS update timer by default; agent CLI update timer only when agent CLIs are
+  installed.
+- Read-only doctor audit.
+- Helper audit events under `/var/log/vps-agent-actions.log`.
 - Local shell lint and generated-script test coverage.
 
 Release readiness is tracked in

@@ -15,8 +15,9 @@ In scope:
 - SSH daemon hardening.
 - Host firewall configuration.
 - Bounded sudo helper installation.
-- Agent CLI and OS update timers.
-- Post-setup `vps-agent-auth` guidance.
+- Optional agent CLI and OS update timers.
+- Helper audit logging.
+- Post-setup `vps-agent-auth` guidance when agent CLIs are installed.
 
 Out of scope:
 
@@ -36,6 +37,7 @@ Out of scope:
 - Tailnet access to the host.
 - Final SSH and firewall posture.
 - Sudo helper policy.
+- `/var/log/vps-agent-actions.log` helper audit trail.
 - Developer CLI auth state created after bootstrap.
 
 ## Trust Boundaries
@@ -73,8 +75,9 @@ or a compromised Tailnet administrator.
 | Provider firewall keeps TCP 22 exposed | Document provider firewall rules and require independent verification from a non-Tailnet network. |
 | Admin user receives excessive default sudo | Default to passwordless sudo only for root-owned `vps-agent-*` helpers. |
 | Agent CLIs obtain direct root primitives | User-level Codex and Grok binaries are not directly sudo-allowed by the default policy. |
+| Agent/helper misuse is hard to reconstruct | Root-owned helpers write best-effort JSONL audit events with helper, user, action, sanitized args, and exit code. |
 | Raw secrets are collected during bootstrap | Bootstrap does not accept, upload, or store raw agent CLI tokens, API keys, GitHub private keys, or local SSH private keys. |
-| Mutable installer supply-chain risk | Trust boundary is documented; installers run as the admin user where possible; installed CLIs do not receive direct passwordless root access by default. |
+| Mutable installer supply-chain risk | Agent CLIs are opt-in; trust boundary is documented; installers run as the admin user where possible; installed CLIs do not receive direct passwordless root access by default. |
 | OS packages fall behind after setup | A systemd OS update timer runs every two weeks. |
 
 ## Residual Risks
@@ -97,4 +100,6 @@ For behavior changes, reviewers should ask:
 - Does the default sudo policy become broader?
 - Are secrets accepted, printed, uploaded, or stored?
 - Does dry-run output still make the plan inspectable?
+- Does `doctor` still report the relevant local or post-bootstrap state?
+- Does helper audit logging still preserve the helper's real exit code?
 - Does the provider firewall guidance need updating?

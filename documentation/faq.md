@@ -34,16 +34,17 @@ sudo check. Only then does the harden phase remove public SSH.
 ## Does it store my API keys or CLI tokens?
 
 No. Bootstrap does not accept, upload, or store raw Codex, Grok, GitHub, or API
-tokens. Developer CLI auth happens after setup through `vps-agent-auth`, using
-native CLI auth flows where available.
+tokens. When optional agent CLIs are installed, developer CLI auth happens after
+setup through `vps-agent-auth`, using native CLI auth flows where available.
 
 ## Why install agent CLIs at all?
 
-The default flow prepares a server for operator workflows that use Codex CLI,
-Grok CLI, and GitHub CLI. You can skip those installs:
+Some operator workflows use Codex CLI, Grok CLI, and GitHub CLI directly on the
+server. The alpha default skips those installs; opt in only for servers that
+need them:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --skip-agent-clis
+bin/vps-bootstrap --host 203.0.113.10 --install-agent-clis
 ```
 
 ## What does the default sudo policy allow?
@@ -53,6 +54,18 @@ commands by default. Raw package managers, `systemctl`, generic file-write
 tools, and user-level agent binaries are not directly passwordless sudo targets.
 
 Use `--full-sudo` only when you intentionally want broad `NOPASSWD:ALL`.
+
+Each helper writes a best-effort JSONL audit event to
+`/var/log/vps-agent-actions.log` with timestamp, helper name, invoking user,
+action, sanitized arguments, and exit code.
+
+## What does `doctor` check?
+
+`bin/vps-bootstrap doctor` is read-only. From a workstation it checks local key
+inputs, command availability, host-key expectations, planned sudo/web/agent CLI
+settings, and provider firewall reminders. On a bootstrapped VPS it also reports
+detected helpers, sudo policy shape, timers, SSH hardening, firewall status,
+Tailnet status, and listening ports.
 
 ## Why are public TCP 80 and 443 open by default?
 

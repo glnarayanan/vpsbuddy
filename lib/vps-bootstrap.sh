@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+VPS_BOOTSTRAP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 reset_config() {
   VPS_HOST=""
   VPS_ADMIN_USER="deploy"
@@ -7,10 +9,12 @@ reset_config() {
   VPS_IDENTITY=""
   VPS_HOSTNAME=""
   VPS_ENABLE_TAILSCALE_SSH="0"
-  VPS_INSTALL_AGENT_CLIS="1"
+  VPS_INSTALL_AGENT_CLIS="0"
   VPS_FULL_SUDO="0"
   VPS_WEB="1"
   VPS_DRY_RUN="0"
+  VPS_DOCTOR="0"
+  VPS_DOCTOR_FAILURES="0"
   VPS_SHOW_HELP="0"
 }
 
@@ -24,6 +28,7 @@ usage() {
   cat <<'USAGE'
 Usage:
   vps-bootstrap --host <ip-or-hostname> [options]
+  vps-bootstrap doctor [options]
 
 Options:
   --host <host>                 Public VPS address for the initial root SSH login.
@@ -32,8 +37,8 @@ Options:
   --identity <path>             Private key used to verify Tailnet login. Default: pubkey without .pub.
   --hostname <name>             Hostname to set on the server and use for Tailscale.
   --enable-tailscale-ssh        Enable Tailscale SSH after joining the Tailnet.
-  --install-agent-clis          Install Codex, Grok, and GitHub CLIs. Default.
-  --skip-agent-clis             Skip Codex, Grok, and GitHub CLI installation.
+  --install-agent-clis          Install Codex, Grok, and GitHub CLIs. Opt-in.
+  --skip-agent-clis             Skip Codex, Grok, and GitHub CLI installation. Default.
   --full-sudo                   Use NOPASSWD:ALL instead of scoped passwordless sudo.
   --web                         Keep public TCP 80/443 open. Default.
   --web=false                   Disable public TCP 80/443.
@@ -45,6 +50,9 @@ The tool assumes the first connection is root@<host> with password auth. It does
 not store or pass the root password; OpenSSH prompts for it normally. Before
 that first connection, paste the VPS SSH host public key from your provider
 console so the bootstrap can pin the host instead of trusting the first key seen.
+
+The doctor command performs local/read-only checks only. Run it from your
+workstation before bootstrap or on a bootstrapped VPS after setup.
 USAGE
 }
 
@@ -113,6 +121,11 @@ detect_identity_path() {
 
 parse_args() {
   local parsed_bool
+
+  if [[ "${1-}" == "doctor" ]]; then
+    VPS_DOCTOR="1"
+    shift
+  fi
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -212,12 +225,12 @@ parse_args() {
     return 0
   fi
 
-  if [[ -z "$VPS_HOST" ]]; then
+  if [[ -z "$VPS_HOST" && "$VPS_DOCTOR" != "1" ]]; then
     error "--host is required"
     return 1
   fi
 
-  if [[ "$VPS_HOST" == *@* ]]; then
+  if [[ -n "$VPS_HOST" && "$VPS_HOST" == *@* ]]; then
     error "--host expects a hostname or IP only; root@ is added automatically"
     return 1
   fi
@@ -559,7 +572,7 @@ FIREWALLD_NO_WEB
 }
 
 generate_remote_script() {
-  cat <<'REMOTE_SCRIPT'
+  cat <<'REMOTE_SCRIPT_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -842,6 +855,14 @@ install_ban_service() {
   warn "neither fail2ban nor sshguard is available from configured repositories"
 }
 
+agent_audit_prelude() {
+  cat <<'AGENT_AUDIT_PRELUDE'
+REMOTE_SCRIPT_HEAD
+  cat "$VPS_BOOTSTRAP_LIB_DIR/templates/vps-agent-audit-prelude.sh"
+  cat <<'REMOTE_SCRIPT_BODY'
+AGENT_AUDIT_PRELUDE
+}
+
 generate_sudoers_policy_remote() {
   local policy_full="${1:-$full_sudo}"
 
@@ -863,11 +884,14 @@ install_agent_sudo_helpers() {
   home_dir="$(admin_home_dir)"
   install -d -m 0755 /usr/local/sbin
 
-  cat >/usr/local/sbin/vps-agent-sudo-check <<'SUDO_CHECK_HELPER'
+  cat >/usr/local/sbin/vps-agent-sudo-check <<'SUDO_CHECK_HELPER_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+SUDO_CHECK_HELPER_HEAD
+  agent_audit_prelude >>/usr/local/sbin/vps-agent-sudo-check
+  cat >>/usr/local/sbin/vps-agent-sudo-check <<'SUDO_CHECK_HELPER_BODY'
 printf 'vps-agent sudo helper access ok\n'
-SUDO_CHECK_HELPER
+SUDO_CHECK_HELPER_BODY
 
   {
     cat <<'PACKAGE_HELPER_HEAD'
@@ -875,6 +899,7 @@ SUDO_CHECK_HELPER
 set -Eeuo pipefail
 PACKAGE_HELPER_HEAD
     printf 'pkg_backend=%q\n' "$PKG_BACKEND"
+    agent_audit_prelude
     cat <<'PACKAGE_HELPER_BODY'
 
 valid_package() {
@@ -931,9 +956,12 @@ esac
 PACKAGE_HELPER_BODY
   } >/usr/local/sbin/vps-agent-package
 
-  cat >/usr/local/sbin/vps-agent-service <<'SERVICE_HELPER'
+  cat >/usr/local/sbin/vps-agent-service <<'SERVICE_HELPER_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+SERVICE_HELPER_HEAD
+  agent_audit_prelude >>/usr/local/sbin/vps-agent-service
+  cat >>/usr/local/sbin/vps-agent-service <<'SERVICE_HELPER_BODY'
 
 usage() {
   printf 'Usage: vps-agent-service start|stop|restart|reload|status|enable|disable <service>\n' >&2
@@ -960,11 +988,14 @@ case "$action" in
     usage
     ;;
 esac
-SERVICE_HELPER
+SERVICE_HELPER_BODY
 
-  cat >/usr/local/sbin/vps-agent-logs <<'LOGS_HELPER'
+  cat >/usr/local/sbin/vps-agent-logs <<'LOGS_HELPER_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+LOGS_HELPER_HEAD
+  agent_audit_prelude >>/usr/local/sbin/vps-agent-logs
+  cat >>/usr/local/sbin/vps-agent-logs <<'LOGS_HELPER_BODY'
 
 usage() {
   printf 'Usage: vps-agent-logs <service> [lines]\n' >&2
@@ -988,7 +1019,7 @@ valid_service "$service" || {
 }
 
 journalctl -u "$service" -n "$lines" --no-pager
-LOGS_HELPER
+LOGS_HELPER_BODY
 
   {
     cat <<'FIREWALL_HELPER_HEAD'
@@ -996,6 +1027,7 @@ LOGS_HELPER
 set -Eeuo pipefail
 FIREWALL_HELPER_HEAD
     printf 'firewall_backend=%q\n' "$FIREWALL_BACKEND"
+    agent_audit_prelude
     cat <<'FIREWALL_HELPER_BODY'
 
 usage() {
@@ -1043,6 +1075,7 @@ set -Eeuo pipefail
 DEPLOY_HELPER_HEAD
     printf 'admin_user=%q\n' "$admin_user"
     printf 'home_dir=%q\n' "$home_dir"
+    agent_audit_prelude
     cat <<'DEPLOY_HELPER_BODY'
 
 usage() {
@@ -1278,6 +1311,7 @@ set -Eeuo pipefail
 AGENT_CLI_UPDATE_HEAD
     printf 'admin_user=%q\n' "$admin_user"
     printf 'home_dir=%q\n' "$home_dir"
+    agent_audit_prelude
     cat <<'AGENT_CLI_UPDATE_BODY'
 
 run_as_admin() {
@@ -1790,7 +1824,7 @@ case "$phase" in
     fail "unknown phase: $phase"
     ;;
 esac
-REMOTE_SCRIPT
+REMOTE_SCRIPT_BODY
 }
 
 build_root_prepare_command() {
@@ -1929,9 +1963,17 @@ Phase 2: verify Tailnet key login
 Phase 3: harden over Tailnet
   $(build_admin_harden_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
 
-Post-setup agent auth on the VPS:
+Agent CLI authentication:
+$(
+    if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
+      cat <<'AGENT_AUTH_DRY_RUN'
   vps-agent-auth --all
   vps-agent-auth --status
+AGENT_AUTH_DRY_RUN
+    else
+      printf '  skipped; pass --install-agent-clis to install Codex, Grok, GitHub CLI, and vps-agent-auth\n'
+    fi
+  )
 
 UFW prepare preview:
 $(generate_ufw_rules prepare "$VPS_WEB")
@@ -1939,6 +1981,190 @@ $(generate_ufw_rules prepare "$VPS_WEB")
 firewalld harden preview:
 $(generate_firewalld_rules harden "$VPS_WEB")
 DRY_RUN
+}
+
+doctor_ok() {
+  printf '[ok] %s\n' "$*"
+}
+
+doctor_warn() {
+  printf '[warn] %s\n' "$*"
+}
+
+doctor_info() {
+  printf '[info] %s\n' "$*"
+}
+
+doctor_fail() {
+  printf '[fail] %s\n' "$*"
+  VPS_DOCTOR_FAILURES=$((VPS_DOCTOR_FAILURES + 1))
+}
+
+doctor_command() {
+  local command_name="$1"
+  local purpose="$2"
+
+  if command -v "$command_name" >/dev/null 2>&1; then
+    doctor_ok "$command_name: available for $purpose"
+  else
+    doctor_warn "$command_name: unavailable; $purpose may need a package install"
+  fi
+}
+
+doctor_local_inputs() {
+  local public_key
+
+  printf '\n== Local bootstrap inputs ==\n'
+  if [[ -n "$VPS_HOST" ]]; then
+    doctor_ok "target host configured: $VPS_HOST"
+  else
+    doctor_info "target host not supplied; pass --host when checking a specific VPS plan"
+  fi
+
+  if public_key="$(read_public_key "$VPS_PUBKEY" 2>/dev/null)"; then
+    doctor_ok "public key readable: $VPS_PUBKEY (${#public_key} bytes)"
+  else
+    doctor_fail "public key missing or invalid: $VPS_PUBKEY"
+  fi
+
+  if [[ -r "$VPS_IDENTITY" ]]; then
+    doctor_ok "identity file readable: $VPS_IDENTITY"
+  else
+    doctor_fail "identity file missing or unreadable: $VPS_IDENTITY"
+  fi
+
+  doctor_info "first SSH host key: paste the provider console OpenSSH host public key when bootstrap prompts"
+  doctor_command ssh "root prepare, Tailnet verification, and harden phases"
+  doctor_command nc "post-bootstrap public port checks from a non-Tailnet network"
+}
+
+doctor_local_plan() {
+  printf '\n== Bootstrap plan ==\n'
+  doctor_info "admin user: $VPS_ADMIN_USER"
+  doctor_info "hostname: ${VPS_HOSTNAME:-<server default>}"
+  doctor_info "Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'enabled' || printf 'disabled')"
+  doctor_info "developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')"
+  doctor_info "sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')"
+  doctor_info "public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')"
+}
+
+doctor_provider_firewall() {
+  printf '\n== Provider firewall checklist ==\n'
+  doctor_info "deny public TCP 22 after bootstrap"
+  if [[ "$VPS_WEB" == "1" ]]; then
+    doctor_info "allow public TCP 80/443 only for hosted web traffic"
+  else
+    doctor_info "deny public TCP 80/443 for private-only servers"
+  fi
+  doctor_info "deny other unsolicited public inbound traffic unless an app explicitly requires it"
+  doctor_info "provider firewalls usually cannot express Tailnet-only SSH; rely on Tailscale plus host firewall"
+}
+
+doctor_remote_vps_state() {
+  local helper sudoers_file tailscale_ip unit
+
+  printf '\n== VPS state checks when run on the server ==\n'
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    doctor_ok "os-release readable: ${PRETTY_NAME:-${ID:-unknown}}"
+  else
+    doctor_info "not running on a supported Linux VPS, or /etc/os-release is unreadable"
+  fi
+
+  if command -v tailscale >/dev/null 2>&1; then
+    tailscale_ip="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+    if [[ "$tailscale_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+      doctor_ok "Tailscale reports IPv4: $tailscale_ip"
+    else
+      doctor_warn "tailscale exists but does not currently report a Tailnet IPv4"
+    fi
+  else
+    doctor_info "tailscale command not found; expected before bootstrap or on non-VPS workstations"
+  fi
+
+  for helper in \
+    /usr/local/sbin/vps-agent-sudo-check \
+    /usr/local/sbin/vps-agent-package \
+    /usr/local/sbin/vps-agent-service \
+    /usr/local/sbin/vps-agent-logs \
+    /usr/local/sbin/vps-agent-firewall \
+    /usr/local/sbin/vps-agent-deploy \
+    /usr/local/sbin/vps-agent-cli-update \
+    /usr/local/sbin/vps-os-update; do
+    if [[ -x "$helper" ]]; then
+      doctor_ok "helper executable: $helper"
+    else
+      doctor_info "helper not installed yet: $helper"
+    fi
+  done
+
+  sudoers_file="/etc/sudoers.d/90-vps-bootstrap-$VPS_ADMIN_USER"
+  if [[ -r "$sudoers_file" ]]; then
+    if grep -q 'VPS_AGENT_HELPERS' "$sudoers_file" && ! grep -q 'NOPASSWD:ALL' "$sudoers_file"; then
+      doctor_ok "sudo helper policy is scoped: $sudoers_file"
+    elif grep -q 'NOPASSWD:ALL' "$sudoers_file"; then
+      doctor_warn "sudo policy grants full passwordless sudo: $sudoers_file"
+    else
+      doctor_warn "sudo policy exists but does not match expected vps-bootstrap shape: $sudoers_file"
+    fi
+  else
+    doctor_info "sudo policy not readable or not installed yet: $sudoers_file"
+  fi
+
+  for unit in vps-agent-cli-update.timer vps-os-update.timer; do
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$unit" --no-legend 2>/dev/null | grep -q .; then
+      doctor_ok "systemd timer installed: $unit"
+    else
+      doctor_info "systemd timer not detected: $unit"
+    fi
+  done
+
+  if [[ -r /etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf ]]; then
+    doctor_ok "SSH hardening snippet installed"
+  else
+    doctor_info "SSH hardening snippet not readable or not installed yet"
+  fi
+
+  if command -v ufw >/dev/null 2>&1; then
+    doctor_info "host firewall backend candidate: ufw"
+    ufw status verbose 2>/dev/null | sed 's/^/  /' || true
+  elif command -v firewall-cmd >/dev/null 2>&1; then
+    doctor_info "host firewall backend candidate: firewalld"
+    firewall-cmd --list-all 2>/dev/null | sed 's/^/  /' || true
+  else
+    doctor_info "no supported host firewall command detected yet"
+  fi
+
+  printf '\n== Exposed ports observation ==\n'
+  if command -v ss >/dev/null 2>&1; then
+    ss -tuln 2>/dev/null | sed 's/^/  /' || true
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -tuln 2>/dev/null | sed 's/^/  /' || true
+  else
+    doctor_info "ss/netstat unavailable; verify public exposure externally with nc from a non-Tailnet network"
+  fi
+}
+
+run_doctor() {
+  VPS_DOCTOR_FAILURES=0
+
+  cat <<'DOCTOR_HEADER'
+vps-bootstrap doctor
+Read-only audit: no SSH connections will be opened and no local or remote state will be changed.
+DOCTOR_HEADER
+
+  doctor_local_inputs
+  doctor_local_plan
+  doctor_provider_firewall
+  doctor_remote_vps_state
+
+  if [[ "$VPS_DOCTOR_FAILURES" -gt 0 ]]; then
+    printf '\nDoctor found %s blocking local input issue(s).\n' "$VPS_DOCTOR_FAILURES"
+    return 1
+  fi
+
+  printf '\nDoctor completed without blocking local input issues.\n'
 }
 
 run_bootstrap() {
@@ -1991,9 +2217,17 @@ Provider firewall reminder:
   Mirror this policy in your VPS provider firewall: no public TCP 22; public TCP 80/443 only when hosting web apps.
 
 Agent CLI authentication:
+$(
+    if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
+      cat <<'AGENT_AUTH_SUMMARY'
   SSH to the server over Tailnet, then run:
     vps-agent-auth --all
     vps-agent-auth --status
+AGENT_AUTH_SUMMARY
+    else
+      printf '  Skipped. Rerun bootstrap with --install-agent-clis if this server should install Codex, Grok, GitHub CLI, and vps-agent-auth.\n'
+    fi
+  )
 SUMMARY
 }
 
@@ -2004,6 +2238,11 @@ main() {
   if [[ "$VPS_SHOW_HELP" == "1" ]]; then
     usage
     return 0
+  fi
+
+  if [[ "$VPS_DOCTOR" == "1" ]]; then
+    run_doctor
+    return $?
   fi
 
   run_bootstrap

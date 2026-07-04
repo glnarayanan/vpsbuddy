@@ -94,10 +94,17 @@ test_parse_args_sets_defaults_and_flags() {
   assert_eq "parse identity" "tests/fixtures/identity_fixture" "$VPS_IDENTITY"
   assert_eq "parse hostname" "app-vps" "$VPS_HOSTNAME"
   assert_eq "parse tailscale ssh flag" "1" "$VPS_ENABLE_TAILSCALE_SSH"
-  assert_eq "parse agent cli install default" "1" "$VPS_INSTALL_AGENT_CLIS"
+  assert_eq "parse agent cli install default" "0" "$VPS_INSTALL_AGENT_CLIS"
   assert_eq "parse full sudo flag" "1" "$VPS_FULL_SUDO"
   assert_eq "parse no web flag" "0" "$VPS_WEB"
   assert_eq "parse dry-run flag" "1" "$VPS_DRY_RUN"
+}
+
+test_parse_args_supports_installing_agent_clis() {
+  reset_config
+  parse_args --host example.test --install-agent-clis
+
+  assert_eq "install agent clis enables install" "1" "$VPS_INSTALL_AGENT_CLIS"
 }
 
 test_parse_args_supports_web_equals_false() {
@@ -318,9 +325,9 @@ test_dry_run_prints_rollback_safe_phase_ordering() {
   assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare as root"
   assert_contains "dry-run includes pinned host key note" "$output" "temporary known_hosts"
   assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
-  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: install"
-  assert_contains "dry-run includes post setup auth command" "$output" "vps-agent-auth --all"
-  assert_contains "dry-run includes post setup status command" "$output" "vps-agent-auth --status"
+  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: skip"
+  assert_contains "dry-run explains skipped agent auth" "$output" "pass --install-agent-clis"
+  assert_not_contains "dry-run omits post setup auth command when skipped" "$output" "vps-agent-auth --all"
   assert_contains "dry-run includes harden phase" "$output" "Phase 3: harden over Tailnet"
   assert_order "dry-run verifies before hardening" "$output" "Phase 2: verify Tailnet key login" "Phase 3: harden over Tailnet"
   assert_order "dry-run prepares before verification" "$output" "Phase 1: prepare as root" "Phase 2: verify Tailnet key login"
@@ -389,6 +396,14 @@ test_parse_args_requires_host() {
   pass "missing host should fail"
 }
 
+test_parse_args_doctor_does_not_require_host() {
+  reset_config
+  parse_args doctor --pubkey tests/fixtures/id_ed25519.pub --identity tests/fixtures/identity_fixture
+
+  assert_eq "doctor mode enabled" "1" "$VPS_DOCTOR"
+  assert_eq "doctor mode allows empty host" "" "$VPS_HOST"
+}
+
 test_remote_script_prepends_missing_sshd_include() {
   local script
   script="$(generate_remote_script)"
@@ -398,7 +413,39 @@ test_remote_script_prepends_missing_sshd_include() {
   assert_not_contains "remote script does not append include after existing sshd directives" "$script" ">>/etc/ssh/sshd_config"
 }
 
+test_remote_script_installs_agent_helper_audit_logging() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "audit prelude template defines finish hook" "$(cat lib/templates/vps-agent-audit-prelude.sh)" "vps_agent_audit_finish()"
+  assert_contains "helper audit writes jsonl log" "$script" "/var/log/vps-agent-actions.log"
+  assert_contains "helper audit records helper name" "$script" '"helper":"%s"'
+  assert_contains "helper audit records exit code" "$script" '"exit_code":%s'
+  assert_contains "package helper receives audit prelude" "$script" "agent_audit_prelude"
+  assert_contains "agent cli updater receives audit prelude" "$script" "AGENT_CLI_UPDATE_BODY"
+}
+
+test_doctor_prints_read_only_audit() {
+  local output
+  reset_config
+  output="$(
+    main doctor \
+      --host 203.0.113.10 \
+      --pubkey tests/fixtures/id_ed25519.pub \
+      --identity tests/fixtures/identity_fixture
+  )"
+
+  assert_contains "doctor announces read-only audit" "$output" "Read-only audit: no SSH connections will be opened"
+  assert_contains "doctor checks local inputs" "$output" "== Local bootstrap inputs =="
+  assert_contains "doctor reports host key expectation" "$output" "first SSH host key"
+  assert_contains "doctor prints provider firewall checklist" "$output" "== Provider firewall checklist =="
+  assert_contains "doctor checks vps state" "$output" "== VPS state checks when run on the server =="
+  assert_contains "doctor observes exposed ports" "$output" "== Exposed ports observation =="
+  assert_contains "doctor reports success summary" "$output" "Doctor completed without blocking local input issues."
+}
+
 test_parse_args_sets_defaults_and_flags
+test_parse_args_supports_installing_agent_clis
 test_parse_args_supports_web_equals_false
 test_parse_args_supports_skipping_agent_clis
 test_parse_args_rejects_removed_agent_auth_options
@@ -421,7 +468,10 @@ test_parse_prepare_output_extracts_tailnet_ip
 test_remote_config_prelude_preserves_public_key_and_empty_hostname
 test_parse_args_sets_default_user
 test_parse_args_requires_host
+test_parse_args_doctor_does_not_require_host
 test_remote_script_prepends_missing_sshd_include
+test_remote_script_installs_agent_helper_audit_logging
+test_doctor_prints_read_only_audit
 
 if [[ "$failures" -gt 0 ]]; then
   printf '\n%s test(s) failed\n' "$failures" >&2

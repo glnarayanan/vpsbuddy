@@ -10,8 +10,8 @@ The tool:
 - Verifies the new user can SSH over the Tailnet and run sudo before lock-down.
 - Disables root/password SSH only after that verification succeeds.
 - Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default for hosted applications.
-- Installs Codex CLI, Grok CLI, and GitHub CLI by default.
-- Keeps Codex and Grok current with a two-day systemd update timer.
+- Installs Codex CLI, Grok CLI, and GitHub CLI only when `--install-agent-clis` is passed.
+- Keeps Codex and Grok current with a two-day systemd update timer when agent CLIs are installed.
 - Installs OS updates every two weeks with an unattended systemd update timer.
 - Pins the first SSH connection to a host public key pasted from the provider console.
 - Supports Ubuntu/Debian through apt and Fedora/RHEL-family hosts through dnf/yum.
@@ -40,11 +40,23 @@ Use `--dry-run` to inspect the phased plan without connecting:
 bin/vps-bootstrap --host 203.0.113.10 --dry-run
 ```
 
+Use `doctor` for a read-only readiness audit without opening SSH connections:
+
+```bash
+bin/vps-bootstrap doctor --host 203.0.113.10
+```
+
 Use `--no-web` or `--web=false` for private-only servers where public HTTP/HTTPS should remain closed.
 
 ## Developer CLIs
 
-The bootstrap installs these developer tools by default:
+The bootstrap skips developer CLIs by default. Install them only on servers that should be agent-ready:
+
+```bash
+bin/vps-bootstrap --host 203.0.113.10 --install-agent-clis
+```
+
+With that option, the bootstrap installs:
 
 - Codex CLI via OpenAI's official installer, `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh`, run as the admin user.
 - Grok CLI via xAI's official installer, `curl -fsSL https://x.ai/cli/install.sh | bash`, run as the admin user.
@@ -60,13 +72,13 @@ The bootstrap also installs `vps-agent-cli-update.service` and `vps-agent-cli-up
 
 OS updates are handled by `vps-os-update.service` and `vps-os-update.timer`, which run every two weeks. On apt systems, `unattended-upgrades` is configured with a fourteen-day periodic cadence; the managed timer also runs `unattended-upgrade -d`. On dnf/yum systems, the timer runs package-manager upgrades non-interactively.
 
-Skip them when building a minimal server:
+The default minimal server path is equivalent to:
 
 ```bash
 bin/vps-bootstrap --host 203.0.113.10 --skip-agent-clis
 ```
 
-Authentication is not performed during bootstrap. After setup, SSH to the VPS over the Tailnet as the admin user and run:
+Authentication is not performed during bootstrap. After setup with `--install-agent-clis`, SSH to the VPS over the Tailnet as the admin user and run:
 
 ```bash
 vps-agent-auth --all
@@ -96,6 +108,8 @@ Default helpers:
 - `vps-agent-cli-update`
 - `vps-os-update`
 
+Each helper invocation writes a best-effort JSONL audit event to `/var/log/vps-agent-actions.log` with timestamp, helper name, invoking user, action, sanitized arguments, and exit code. Audit logging is non-fatal so helper behavior does not change if logging fails.
+
 Use `--full-sudo` only when you intentionally want broad `NOPASSWD:ALL` behavior:
 
 ```bash
@@ -122,7 +136,7 @@ This is the server host key, not your local user key and not a SHA256 fingerprin
 - Your VPS provider must expose the server SSH host public key so you can paste it into the prompt before first connection.
 - The VPS must have outbound internet access for package installation and Tailscale login.
 - You must be able to approve the interactive Tailscale login URL during the prepare phase.
-- Developer CLI auth happens after setup through `vps-agent-auth`.
+- Developer CLI auth happens after setup through `vps-agent-auth` only when `--install-agent-clis` was used.
 
 ## Safety Model
 
@@ -131,6 +145,6 @@ The script intentionally works in three phases:
 1. Prepare as root while keeping temporary public SSH open.
 2. Verify the new admin user can SSH over the Tailnet and run `sudo -n /usr/local/sbin/vps-agent-sudo-check`.
 3. Harden SSH and remove public SSH only after verification passes.
-4. Run `vps-agent-auth --all` later from the VPS when ready to authenticate developer CLIs.
+4. Optionally run `vps-agent-auth --all` later from the VPS when `--install-agent-clis` was used and you are ready to authenticate developer CLIs.
 
 If phase 1 or 2 fails, root/password SSH is left active so the server can be repaired.

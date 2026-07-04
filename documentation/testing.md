@@ -27,6 +27,7 @@ make lint
 The tests cover:
 
 - CLI argument parsing and defaults.
+- Opt-in developer CLI installation defaults.
 - Public/private key path handling.
 - SSH hardening snippet generation.
 - UFW and firewalld command generation.
@@ -36,8 +37,10 @@ The tests cover:
 - Agent CLI update timer generation for two-day Codex installer reruns and `grok update`.
 - OS update timer generation for two-week unattended apt/dnf/yum package updates.
 - Dry-run phase ordering that verifies Tailnet login before hardening.
+- Read-only `doctor` output for local inputs, provider firewall reminders, VPS state checks, and exposed port observations.
 - Streamed remote config generation so public keys with spaces and empty optional values survive SSH execution.
 - Scoped sudo policy generation and the `--full-sudo` escape hatch.
+- Best-effort JSONL audit logging inserted into root-owned helper scripts.
 - Parsing the prepare phase Tailnet IP from remote output.
 - Safe SSH include placement when a distro image lacks `/etc/ssh/sshd_config.d` support in the main config.
 

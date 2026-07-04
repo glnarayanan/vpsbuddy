@@ -27,8 +27,9 @@ testing, but public releases should be treated as early and security-sensitive.
   SSH.
 - Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default
   for hosted web applications.
-- Installs Codex CLI, Grok CLI, and GitHub CLI by default.
-- Adds systemd timers for agent CLI updates and OS package updates.
+- Installs Codex CLI, Grok CLI, and GitHub CLI only when explicitly requested.
+- Adds an OS package update timer by default and agent CLI update timers only
+  when agent CLIs are installed.
 - Supports fresh Ubuntu, Debian, Fedora, RHEL-family, AlmaLinux, and Rocky Linux
   hosts through apt, dnf, or yum paths.
 
@@ -75,7 +76,13 @@ bin/vps-bootstrap \
 Use `--no-web` or `--web=false` for private-only servers where public HTTP and
 HTTPS should remain closed.
 
-After setup, SSH over the Tailnet and authenticate optional developer CLIs:
+To install optional developer CLIs, pass `--install-agent-clis`:
+
+```bash
+bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --install-agent-clis
+```
+
+After setup with that option, SSH over the Tailnet and authenticate those CLIs:
 
 ```bash
 ssh deploy@<tailscale-ip>
@@ -118,8 +125,12 @@ For a real VPS smoke test, use a disposable fresh instance and verify:
 - `sudo -n /usr/local/sbin/vps-agent-sudo-check` succeeds for the admin user.
 - Public TCP 22 is closed from a non-Tailnet network.
 - Public TCP 80/443 match the selected `--web` setting.
-- `systemctl list-timers` shows the agent CLI and OS update timers.
-- `vps-agent-auth --status` reports the expected post-setup auth state.
+- `systemctl list-timers` shows the OS update timer, plus the agent CLI update
+  timer when `--install-agent-clis` was used.
+- `bin/vps-bootstrap doctor` reports no blocking local input issues from the
+  workstation.
+- `vps-agent-auth --status` reports the expected post-setup auth state when
+  `--install-agent-clis` was used.
 
 The release checklist lives in
 [documentation/release-process.md](documentation/release-process.md).
