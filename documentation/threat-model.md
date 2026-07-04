@@ -67,18 +67,18 @@ or a compromised Tailnet administrator.
 
 ## Primary Threats and Mitigations
 
-| Threat | Mitigation |
-| --- | --- |
-| First-connection SSH impersonation | Prompt for the provider-console SSH host public key and use strict host-key checking. |
-| Operator lockout during hardening | Keep public root/password SSH open until Tailnet admin SSH and sudo verification succeed. |
-| Public SSH remains exposed after success | Harden SSH only after verification and remove public SSH from UFW or firewalld. |
-| Provider firewall keeps TCP 22 exposed | Document provider firewall rules and require independent verification from a non-Tailnet network. |
-| Admin user receives excessive default sudo | Default to passwordless sudo only for root-owned `vps-agent-*` helpers. |
-| Agent CLIs obtain direct root primitives | User-level Codex and Grok binaries are not directly sudo-allowed by the default policy. |
-| Agent/helper misuse is hard to reconstruct | Root-owned helpers write best-effort JSONL audit events with helper, user, action, sanitized args, and exit code. |
-| Raw secrets are collected during bootstrap | Bootstrap does not accept, upload, or store raw agent CLI tokens, API keys, GitHub private keys, or local SSH private keys. |
-| Mutable installer supply-chain risk | Agent CLIs are opt-in; trust boundary is documented; installers run as the admin user where possible; installed CLIs do not receive direct passwordless root access by default. |
-| OS packages fall behind after setup | A systemd OS update timer runs every two weeks. |
+| Threat                                     | Mitigation                                                                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First-connection SSH impersonation         | Prompt for the provider-console SSH host public key and use strict host-key checking.                                                                                           |
+| Operator lockout during hardening          | Keep public root/password SSH open until Tailnet admin SSH and sudo verification succeed.                                                                                       |
+| Public SSH remains exposed after success   | Harden SSH only after verification and remove public SSH from UFW or firewalld.                                                                                                 |
+| Provider firewall keeps TCP 22 exposed     | Document provider firewall rules and require independent verification from a non-Tailnet network.                                                                               |
+| Admin user receives excessive default sudo | Default to passwordless sudo only for root-owned `vps-agent-*` helpers.                                                                                                         |
+| Agent CLIs obtain direct root primitives   | User-level Codex and Grok binaries are not directly sudo-allowed by the default policy.                                                                                         |
+| Agent/helper misuse is hard to reconstruct | Root-owned helpers write best-effort JSONL audit events with helper, user, action, sanitized args, and exit code.                                                               |
+| Raw secrets are collected during bootstrap | Bootstrap does not accept, upload, or store raw agent CLI tokens, API keys, GitHub private keys, or local SSH private keys.                                                     |
+| Mutable installer supply-chain risk        | Agent CLIs are opt-in; trust boundary is documented; installers run as the admin user where possible; installed CLIs do not receive direct passwordless root access by default. |
+| OS packages fall behind after setup        | A systemd OS update timer runs every two weeks.                                                                                                                                 |
 
 ## Residual Risks
 

@@ -6,9 +6,9 @@ are not given unsafe operational guidance before a fix is available.
 
 ## Supported Versions
 
-| Version | Status |
-| --- | --- |
-| `v0.1.0-alpha` | Security reports accepted. Breaking changes may still occur. |
+| Version           | Status                                                        |
+| ----------------- | ------------------------------------------------------------- |
+| `v0.1.0-alpha`    | Security reports accepted. Breaking changes may still occur.  |
 | Unreleased `main` | Security reports accepted. Use with review and smoke testing. |
 
 ## Report a Vulnerability

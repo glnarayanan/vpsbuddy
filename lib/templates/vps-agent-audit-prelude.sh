@@ -44,8 +44,8 @@ vps_agent_audit_finish() {
       "$(vps_agent_json_escape "$VPS_AGENT_AUDIT_ACTION")" \
       "$args_json" \
       "$status"
-  } >>/var/log/vps-agent-actions.log) 2>/dev/null || true
-  chmod 0640 /var/log/vps-agent-actions.log 2>/dev/null || true
+  } >> /var/log/vps-agent-actions.log) 2> /dev/null || true
+  chmod 0640 /var/log/vps-agent-actions.log 2> /dev/null || true
 }
 
 trap 'vps_agent_audit_finish "$?"' EXIT

@@ -22,6 +22,13 @@ make lint
 
 `make lint` uses ShellCheck when it is installed. If ShellCheck is unavailable, it falls back to `bash -n` syntax checks.
 
+To match CI locally on macOS:
+
+```bash
+brew install shellcheck shfmt
+npm install -g prettier@3.3.3
+```
+
 ## Test Coverage
 
 The tests cover:

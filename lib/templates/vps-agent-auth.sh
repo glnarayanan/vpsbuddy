@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 usage() {
-  cat <<'USAGE'
+  cat << 'USAGE'
 Usage:
   vps-agent-auth [--all] [--status] [--codex] [--grok] [--github]
 
@@ -13,7 +13,7 @@ USAGE
 }
 
 have() {
-  command -v "$1" >/dev/null 2>&1
+  command -v "$1" > /dev/null 2>&1
 }
 
 status_codex() {
@@ -21,7 +21,7 @@ status_codex() {
 }
 
 grok_command() {
-  if command -v grok >/dev/null 2>&1; then
+  if command -v grok > /dev/null 2>&1; then
     command -v grok
     return 0
   fi
@@ -49,7 +49,7 @@ status_grok() {
   fi
 
   if [[ -r "${HOME}/.grok/auth.json" ]]; then
-    printf '~/.grok/auth.json exists from Grok login.\n'
+    printf '%s/.grok/auth.json exists from Grok login.\n' "$HOME"
     return 0
   fi
 

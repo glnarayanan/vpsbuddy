@@ -28,16 +28,16 @@ It is deliberately smaller than a hosting platform.
 
 ## Compared With Hosting Panels
 
-| Area | `vps-bootstrap` | Dokploy/Coolify-style panels |
-| --- | --- | --- |
-| Primary job | Secure the fresh VPS baseline | Deploy and manage applications |
-| Interface | Local CLI | Web UI/control plane |
-| Runtime footprint | No ongoing app control plane | Long-running platform services |
-| App deployment | Outside scope | Core feature |
-| TLS/domain routing | Outside scope | Core feature |
-| SSH hardening | Core feature | Usually adjacent setup |
-| Tailnet-first SSH | Core feature | Depends on user setup |
-| Provider firewall guidance | Documented expectation | Usually external |
+| Area                       | `vps-bootstrap`               | Dokploy/Coolify-style panels   |
+| -------------------------- | ----------------------------- | ------------------------------ |
+| Primary job                | Secure the fresh VPS baseline | Deploy and manage applications |
+| Interface                  | Local CLI                     | Web UI/control plane           |
+| Runtime footprint          | No ongoing app control plane  | Long-running platform services |
+| App deployment             | Outside scope                 | Core feature                   |
+| TLS/domain routing         | Outside scope                 | Core feature                   |
+| SSH hardening              | Core feature                  | Usually adjacent setup         |
+| Tailnet-first SSH          | Core feature                  | Depends on user setup          |
+| Provider firewall guidance | Documented expectation        | Usually external               |
 
 These tools can be complementary. A common path is to run `vps-bootstrap` first,
 verify the final SSH/firewall posture, then install a deployment platform if
