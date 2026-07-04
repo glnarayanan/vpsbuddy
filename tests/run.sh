@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# shellcheck source=../lib/vps-bootstrap.sh
+# shellcheck source=lib/vps-bootstrap.sh
 source "$ROOT_DIR/lib/vps-bootstrap.sh"
 
 failures=0
@@ -94,10 +94,17 @@ test_parse_args_sets_defaults_and_flags() {
   assert_eq "parse identity" "tests/fixtures/identity_fixture" "$VPS_IDENTITY"
   assert_eq "parse hostname" "app-vps" "$VPS_HOSTNAME"
   assert_eq "parse tailscale ssh flag" "1" "$VPS_ENABLE_TAILSCALE_SSH"
-  assert_eq "parse agent cli install default" "1" "$VPS_INSTALL_AGENT_CLIS"
+  assert_eq "parse agent cli install default" "0" "$VPS_INSTALL_AGENT_CLIS"
   assert_eq "parse full sudo flag" "1" "$VPS_FULL_SUDO"
   assert_eq "parse no web flag" "0" "$VPS_WEB"
   assert_eq "parse dry-run flag" "1" "$VPS_DRY_RUN"
+}
+
+test_parse_args_supports_installing_agent_clis() {
+  reset_config
+  parse_args --host example.test --install-agent-clis
+
+  assert_eq "install agent clis enables install" "1" "$VPS_INSTALL_AGENT_CLIS"
 }
 
 test_parse_args_supports_web_equals_false() {
@@ -116,12 +123,12 @@ test_parse_args_supports_skipping_agent_clis() {
 
 test_parse_args_rejects_removed_agent_auth_options() {
   reset_config
-  if parse_args --host example.test --agent-auth interactive >/tmp/vps-bootstrap-test.out 2>/tmp/vps-bootstrap-test.err; then
+  if parse_args --host example.test --agent-auth interactive > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
     fail "removed --agent-auth should fail"
     return
   fi
 
-  if parse_args --host example.test --agent-auth-env-file tests/fixtures/agent-cli.env >/tmp/vps-bootstrap-test.out 2>/tmp/vps-bootstrap-test.err; then
+  if parse_args --host example.test --agent-auth-env-file tests/fixtures/agent-cli.env > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
     fail "removed --agent-auth-env-file should fail"
     return
   fi
@@ -192,7 +199,7 @@ test_remote_script_installs_agent_clis_and_supports_auth_modes() {
   assert_contains "remote script installs codex cli with official installer" "$script" "https://chatgpt.com/codex/install.sh"
   assert_contains "remote script installs codex non-interactively" "$script" "CODEX_NON_INTERACTIVE=1 sh"
   assert_contains "remote script installs official grok cli" "$script" "https://x.ai/cli/install.sh | bash"
-  assert_contains "remote script installs grok cli as admin user" "$script" 'sudo -H -u "$admin_user"'
+  assert_contains "remote script installs grok cli as admin user" "$script" "sudo -H -u \"\$admin_user\""
   assert_contains "remote script removes third-party grok package" "$script" "npm uninstall -g @vibe-kit/grok-cli"
   assert_contains "remote script installs github cli apt repo" "$script" "https://cli.github.com/packages stable main"
   assert_contains "remote script installs github cli rpm repo" "$script" "https://cli.github.com/packages/rpm/gh-cli.repo"
@@ -243,6 +250,14 @@ test_agent_auth_helper_uses_native_auth_only() {
   assert_not_contains "helper does not use third-party grok settings" "$helper" "user-settings.json"
 }
 
+test_agent_auth_helper_renders_template() {
+  local helper template
+  helper="$(generate_agent_auth_helper_script)"
+  template="$(cat lib/templates/vps-agent-auth.sh)"
+
+  assert_eq "agent auth helper renders template" "$template" "$helper"
+}
+
 test_remote_script_installs_agent_auth_helper() {
   local script
   script="$(generate_remote_script)"
@@ -284,15 +299,15 @@ test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy() {
   assert_contains "remote script installs bounded sudo helpers" "$script" "install_agent_sudo_helpers"
   assert_contains "remote script writes package helper" "$script" "/usr/local/sbin/vps-agent-package"
   assert_contains "remote script writes deploy helper" "$script" "/usr/local/sbin/vps-agent-deploy"
-  assert_contains "remote script writes final requested sudo policy" "$script" 'write_sudoers_policy "$full_sudo"'
-  assert_order "remote script final sudo policy happens during harden" "$script" "write_sshd_hardening" 'write_sudoers_policy "$full_sudo"'
+  assert_contains "remote script writes final requested sudo policy" "$script" "write_sudoers_policy \"\$full_sudo\""
+  assert_order "remote script final sudo policy happens during harden" "$script" "write_sshd_hardening" "write_sudoers_policy \"\$full_sudo\""
 }
 
 test_host_public_key_validation_and_known_hosts() {
   local known_hosts
 
   validate_host_public_key_line "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample"
-  if validate_host_public_key_line "SHA256:not-a-public-key" >/tmp/vps-bootstrap-test.out 2>/tmp/vps-bootstrap-test.err; then
+  if validate_host_public_key_line "SHA256:not-a-public-key" > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
     fail "fingerprint should not be accepted as host public key"
     return
   fi
@@ -318,9 +333,9 @@ test_dry_run_prints_rollback_safe_phase_ordering() {
   assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare as root"
   assert_contains "dry-run includes pinned host key note" "$output" "temporary known_hosts"
   assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
-  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: install"
-  assert_contains "dry-run includes post setup auth command" "$output" "vps-agent-auth --all"
-  assert_contains "dry-run includes post setup status command" "$output" "vps-agent-auth --status"
+  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: skip"
+  assert_contains "dry-run explains skipped agent auth" "$output" "pass --install-agent-clis"
+  assert_not_contains "dry-run omits post setup auth command when skipped" "$output" "vps-agent-auth --all"
   assert_contains "dry-run includes harden phase" "$output" "Phase 3: harden over Tailnet"
   assert_order "dry-run verifies before hardening" "$output" "Phase 2: verify Tailnet key login" "Phase 3: harden over Tailnet"
   assert_order "dry-run prepares before verification" "$output" "Phase 1: prepare as root" "Phase 2: verify Tailnet key login"
@@ -348,12 +363,12 @@ test_parse_prepare_output_extracts_tailnet_ip() {
 }
 
 test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
-  local prelude public_key loaded_public_key loaded_hostname
+  local expected_public_key prelude loaded_public_key loaded_hostname
   reset_config
   VPS_ADMIN_USER="deploy"
   VPS_HOSTNAME=""
-  public_key="$(read_public_key tests/fixtures/id_ed25519.pub)"
-  prelude="$(generate_remote_config_prelude prepare "$public_key")"
+  expected_public_key="$(read_public_key tests/fixtures/id_ed25519.pub)"
+  prelude="$(generate_remote_config_prelude prepare "$expected_public_key")"
 
   loaded_public_key="$(
     public_key=""
@@ -367,7 +382,7 @@ test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
     printf '%s' "$requested_hostname"
   )"
 
-  assert_eq "remote config preserves spaced public key" "$public_key" "$loaded_public_key"
+  assert_eq "remote config preserves spaced public key" "$expected_public_key" "$loaded_public_key"
   assert_eq "remote config preserves empty hostname" "" "$loaded_hostname"
   assert_contains "remote config sets phase" "$prelude" "phase=prepare"
 }
@@ -381,12 +396,20 @@ test_parse_args_sets_default_user() {
 
 test_parse_args_requires_host() {
   reset_config
-  if parse_args --user deploy >/tmp/vps-bootstrap-test.out 2>/tmp/vps-bootstrap-test.err; then
+  if parse_args --user deploy > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
     fail "missing host should fail"
     return
   fi
 
   pass "missing host should fail"
+}
+
+test_parse_args_doctor_does_not_require_host() {
+  reset_config
+  parse_args doctor --pubkey tests/fixtures/id_ed25519.pub --identity tests/fixtures/identity_fixture
+
+  assert_eq "doctor mode enabled" "1" "$VPS_DOCTOR"
+  assert_eq "doctor mode allows empty host" "" "$VPS_HOST"
 }
 
 test_remote_script_prepends_missing_sshd_include() {
@@ -398,7 +421,65 @@ test_remote_script_prepends_missing_sshd_include() {
   assert_not_contains "remote script does not append include after existing sshd directives" "$script" ">>/etc/ssh/sshd_config"
 }
 
+test_remote_script_installs_agent_helper_audit_logging() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "audit prelude template defines finish hook" "$(cat lib/templates/vps-agent-audit-prelude.sh)" "vps_agent_audit_finish()"
+  assert_contains "helper audit writes jsonl log" "$script" "/var/log/vps-agent-actions.log"
+  assert_contains "helper audit records helper name" "$script" '"helper":"%s"'
+  assert_contains "helper audit records exit code" "$script" '"exit_code":%s'
+  assert_contains "package helper receives audit prelude" "$script" "agent_audit_prelude"
+  assert_contains "agent cli updater receives audit prelude" "$script" "AGENT_CLI_UPDATE_BODY"
+}
+
+test_remote_script_defaults_skip_agent_clis_without_prelude() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "remote script defaults agent clis off" "$script" "install_agent_clis=\"\${install_agent_clis:-0}\""
+  assert_not_contains "remote script does not default agent clis on" "$script" "install_agent_clis=\"\${install_agent_clis:-1}\""
+}
+
+test_audit_prelude_handles_empty_args_and_suppresses_write_errors() {
+  local output status
+
+  set +e
+  output="$(
+    bash -c '
+      set -Eeuo pipefail
+      source lib/templates/vps-agent-audit-prelude.sh
+      vps_agent_audit_finish 0
+    ' 2>&1
+  )"
+  status="$?"
+  set -e
+
+  assert_eq "audit prelude empty args status" "0" "$status"
+  assert_eq "audit prelude suppresses log write errors" "" "$output"
+}
+
+test_doctor_prints_read_only_audit() {
+  local output
+  reset_config
+  output="$(
+    main doctor \
+      --host 203.0.113.10 \
+      --pubkey tests/fixtures/id_ed25519.pub \
+      --identity tests/fixtures/identity_fixture
+  )"
+
+  assert_contains "doctor announces read-only audit" "$output" "Read-only audit: no SSH connections will be opened"
+  assert_contains "doctor checks local inputs" "$output" "== Local bootstrap inputs =="
+  assert_contains "doctor reports host key expectation" "$output" "first SSH host key"
+  assert_contains "doctor prints provider firewall checklist" "$output" "== Provider firewall checklist =="
+  assert_contains "doctor checks vps state" "$output" "== VPS state checks when run on the server =="
+  assert_contains "doctor observes exposed ports" "$output" "== Exposed ports observation =="
+  assert_contains "doctor reports success summary" "$output" "Doctor completed without blocking local input issues."
+}
+
 test_parse_args_sets_defaults_and_flags
+test_parse_args_supports_installing_agent_clis
 test_parse_args_supports_web_equals_false
 test_parse_args_supports_skipping_agent_clis
 test_parse_args_rejects_removed_agent_auth_options
@@ -410,6 +491,7 @@ test_remote_script_contains_supported_distros_and_tailscale_flow
 test_remote_script_installs_agent_clis_and_supports_auth_modes
 test_remote_script_installs_update_timers
 test_agent_auth_helper_uses_native_auth_only
+test_agent_auth_helper_renders_template
 test_remote_script_installs_agent_auth_helper
 test_sudoers_policy_is_scoped_by_default
 test_sudoers_policy_supports_full_sudo_escape_hatch
@@ -421,7 +503,12 @@ test_parse_prepare_output_extracts_tailnet_ip
 test_remote_config_prelude_preserves_public_key_and_empty_hostname
 test_parse_args_sets_default_user
 test_parse_args_requires_host
+test_parse_args_doctor_does_not_require_host
 test_remote_script_prepends_missing_sshd_include
+test_remote_script_installs_agent_helper_audit_logging
+test_remote_script_defaults_skip_agent_clis_without_prelude
+test_audit_prelude_handles_empty_args_and_suppresses_write_errors
+test_doctor_prints_read_only_audit
 
 if [[ "$failures" -gt 0 ]]; then
   printf '\n%s test(s) failed\n' "$failures" >&2
