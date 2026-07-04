@@ -425,6 +425,32 @@ test_remote_script_installs_agent_helper_audit_logging() {
   assert_contains "agent cli updater receives audit prelude" "$script" "AGENT_CLI_UPDATE_BODY"
 }
 
+test_remote_script_defaults_skip_agent_clis_without_prelude() {
+  local script
+  script="$(generate_remote_script)"
+
+  assert_contains "remote script defaults agent clis off" "$script" 'install_agent_clis="${install_agent_clis:-0}"'
+  assert_not_contains "remote script does not default agent clis on" "$script" 'install_agent_clis="${install_agent_clis:-1}"'
+}
+
+test_audit_prelude_handles_empty_args_and_suppresses_write_errors() {
+  local output status
+
+  set +e
+  output="$(
+    bash -c '
+      set -Eeuo pipefail
+      source lib/templates/vps-agent-audit-prelude.sh
+      vps_agent_audit_finish 0
+    ' 2>&1
+  )"
+  status="$?"
+  set -e
+
+  assert_eq "audit prelude empty args status" "0" "$status"
+  assert_eq "audit prelude suppresses log write errors" "" "$output"
+}
+
 test_doctor_prints_read_only_audit() {
   local output
   reset_config
@@ -471,6 +497,8 @@ test_parse_args_requires_host
 test_parse_args_doctor_does_not_require_host
 test_remote_script_prepends_missing_sshd_include
 test_remote_script_installs_agent_helper_audit_logging
+test_remote_script_defaults_skip_agent_clis_without_prelude
+test_audit_prelude_handles_empty_args_and_suppresses_write_errors
 test_doctor_prints_read_only_audit
 
 if [[ "$failures" -gt 0 ]]; then

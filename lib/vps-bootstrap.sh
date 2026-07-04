@@ -582,7 +582,7 @@ set -Eeuo pipefail
 requested_hostname="${requested_hostname:-}"
 enable_tailscale_ssh="${enable_tailscale_ssh:-0}"
 web_enabled="${web_enabled:-1}"
-install_agent_clis="${install_agent_clis:-1}"
+install_agent_clis="${install_agent_clis:-0}"
 full_sudo="${full_sudo:-0}"
 
 OS_ID=""

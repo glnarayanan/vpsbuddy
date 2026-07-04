@@ -73,9 +73,18 @@ After the run:
 ssh deploy@<tailscale-ip>
 sudo -n /usr/local/sbin/vps-agent-sudo-check
 systemctl list-timers | grep 'vps-os-update'
-bin/vps-bootstrap doctor
 test -r /var/log/vps-agent-actions.log && tail -n 5 /var/log/vps-agent-actions.log
 ```
+
+From the workstation checkout, run `doctor` again after bootstrap to capture the
+same local plan plus any state visible from the current machine:
+
+```bash
+bin/vps-bootstrap doctor --host <public-ip>
+```
+
+If you intentionally copied this repository to the VPS, you may also run
+`bin/vps-bootstrap doctor` there for on-server observations.
 
 If the release specifically validates optional agent CLIs, rerun the smoke test
 with `--install-agent-clis`, confirm `vps-agent-cli-update.timer`, and then run
