@@ -19,6 +19,15 @@ changes, compatibility changes, and smoke-test notes.
 - Root documentation now positions the project as a security-first fresh VPS
   bootstrap tool rather than a hosting panel or application orchestrator.
 - Developer CLI installation is opt-in through `--install-agent-clis`.
+- `vps-agent-auth` generation now uses a shared template instead of duplicated
+  heredocs.
+- `documentation/README.md` is now an advanced usage reference instead of a
+  duplicate project overview.
+
+### Removed
+
+- Unused Node.js runtime installer helper.
+- Premature CI/release hygiene issue template.
 
 ## [0.1.0-alpha] - Planned
 

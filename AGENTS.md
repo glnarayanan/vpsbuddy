@@ -4,7 +4,7 @@ This repository contains a Bash CLI for securely bootstrapping fresh VPS hosts.
 
 Keep this file lean. Load the detailed project docs in `documentation/` when changing behavior:
 
-- `documentation/README.md` for usage and project overview.
+- `documentation/README.md` for advanced usage and operator notes.
 - `documentation/security-model.md` for the phased hardening model.
 - `documentation/threat-model.md` for assets, trust boundaries, threats, and non-goals.
 - `documentation/compatibility-matrix.md` for supported fresh VPS targets and smoke-test expectations.

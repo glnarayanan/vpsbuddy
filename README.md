@@ -137,8 +137,8 @@ The release checklist lives in
 
 ## Documentation
 
-- [documentation/README.md](documentation/README.md): detailed usage and
-  project overview.
+- [documentation/README.md](documentation/README.md): advanced usage and
+  operator notes.
 - [documentation/security-model.md](documentation/security-model.md): phased
   hardening and credential handling.
 - [documentation/threat-model.md](documentation/threat-model.md): assets,
