@@ -26,6 +26,8 @@ The scheduled OpenSSF Scorecard workflow pins `ossf/scorecard-action` to a concr
 
 Because this repository is private, the Scorecard job also needs job-level read permissions for checks, issues, and pull requests. Without those reads, Scorecard can fail during commit or SAST discovery with `Resource not accessible by integration`.
 
+Do not add `github/codeql-action/upload-sarif` to the Scorecard workflow unless code scanning is enabled for the repository. Without code scanning, the Scorecard run can succeed and then fail during SARIF upload.
+
 To match CI locally on macOS:
 
 ```bash
