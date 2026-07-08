@@ -24,6 +24,8 @@ make lint
 
 The scheduled OpenSSF Scorecard workflow pins `ossf/scorecard-action` to a concrete upstream release tag. If GitHub cannot resolve that tag, update it to the current upstream release instead of using a missing floating major tag.
 
+Because this repository is private, the Scorecard job also needs job-level read permissions for checks, issues, and pull requests. Without those reads, Scorecard can fail during commit or SAST discovery with `Resource not accessible by integration`.
+
 To match CI locally on macOS:
 
 ```bash

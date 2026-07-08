@@ -10,12 +10,6 @@ on:
     - cron: "37 3 * * 1"
   workflow_dispatch:
 
-permissions:
-  actions: read
-  contents: read
-  id-token: write
-  security-events: write
-
 concurrency:
   group: scorecard-${{ github.ref }}
   cancel-in-progress: true
@@ -24,6 +18,14 @@ jobs:
   scorecard:
     name: Analyze project security posture
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      id-token: write
+      issues: read
+      pull-requests: read
+      security-events: write
 
     steps:
       - name: Check out repository
