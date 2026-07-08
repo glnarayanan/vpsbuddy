@@ -19,7 +19,7 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 
 Before the first remote phase, the local CLI prompts for the VPS SSH host public key from the provider console and pins it in a temporary `known_hosts` file. The script then uses strict host-key checking instead of trusting the first key seen.
 
-The first remote phase creates the admin user, installs the key, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs developer CLIs, and configures the firewall with temporary public SSH still allowed.
+The first remote phase connects as `--login-user` and runs as root directly for `root` logins or through `sudo bash -s` for sudo-first image users such as `ubuntu`. It creates or reuses the admin user, installs the selected `--pubkey`, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs developer CLIs, and configures the firewall with temporary public SSH still allowed.
 
 The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n /usr/local/sbin/vps-agent-sudo-check`. Only after that succeeds does the harden phase run over the Tailnet connection.
 

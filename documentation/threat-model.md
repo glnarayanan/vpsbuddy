@@ -42,7 +42,7 @@ Out of scope:
 
 ## Trust Boundaries
 
-- Operator workstation to public `root@host` SSH.
+- Operator workstation to public initial SSH as `--login-user`.
 - Operator workstation to Tailnet SSH after Tailscale joins.
 - VPS to OS package repositories.
 - VPS to Tailscale coordination and DERP infrastructure.
@@ -70,7 +70,7 @@ or a compromised Tailnet administrator.
 | Threat                                     | Mitigation                                                                                                                                                                      |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | First-connection SSH impersonation         | Prompt for the provider-console SSH host public key and use strict host-key checking.                                                                                           |
-| Operator lockout during hardening          | Keep public root/password SSH open until Tailnet admin SSH and sudo verification succeed.                                                                                       |
+| Operator lockout during hardening          | Keep the original public password SSH path open until Tailnet admin SSH and sudo verification succeed.                                                                          |
 | Public SSH remains exposed after success   | Harden SSH only after verification and remove public SSH from UFW or firewalld.                                                                                                 |
 | Provider firewall keeps TCP 22 exposed     | Document provider firewall rules and require independent verification from a non-Tailnet network.                                                                               |
 | Admin user receives excessive default sudo | Default to passwordless sudo only for root-owned `vps-agent-*` helpers.                                                                                                         |

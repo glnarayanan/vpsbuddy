@@ -2,8 +2,8 @@
 
 Security-first VPS setup scripts for fresh servers.
 
-`vps-bootstrap` takes a newly provisioned VPS from an initial `root@host`
-password SSH login to a Tailnet-first operating baseline. It is meant for
+`vps-bootstrap` takes a newly provisioned VPS from an initial password SSH login
+to a Tailnet-first operating baseline. It is meant for
 operators who want a repeatable first-hour hardening flow before installing an
 application stack.
 
@@ -23,7 +23,7 @@ testing, but public releases should be treated as early and security-sensitive.
 - Pins the first SSH connection to a host public key pasted from the VPS
   provider console.
 - Installs and joins Tailscale interactively.
-- Verifies Tailnet SSH and bounded sudo before disabling public root/password
+- Verifies Tailnet SSH and bounded sudo before disabling public password
   SSH.
 - Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default
   for hosted web applications.
@@ -35,8 +35,8 @@ testing, but public releases should be treated as early and security-sensitive.
 
 ## Requirements
 
-- A fresh VPS where you can initially SSH as `root` with password
-  authentication.
+- A fresh VPS where you can initially SSH with password authentication as
+  `root`, `ubuntu`, `ec2-user`, or another sudo-capable login user.
 - A local SSH public/private key pair.
 - Access to the VPS provider console so you can copy the server SSH host public
   key before the first connection.
@@ -66,11 +66,24 @@ Useful options:
 ```bash
 bin/vps-bootstrap \
   --host 203.0.113.10 \
+  --login-user root \
   --user deploy \
   --pubkey ~/.ssh/id_ed25519.pub \
   --identity ~/.ssh/id_ed25519 \
   --hostname app-01 \
   --enable-tailscale-ssh
+```
+
+For cloud images that start with `ubuntu` instead of direct root login:
+
+```bash
+bin/vps-bootstrap \
+  --host 203.0.113.10 \
+  --login-user ubuntu \
+  --user ubuntu \
+  --pubkey ~/.ssh/id_ed25519.pub \
+  --identity ~/.ssh/id_ed25519 \
+  --hostname app-01
 ```
 
 Use `--no-web` or `--web=false` for private-only servers where public HTTP and
@@ -95,13 +108,13 @@ vps-agent-auth --status
 The bootstrap intentionally keeps rollback access until the Tailnet path is
 verified:
 
-1. Prepare as root while temporary public SSH remains open.
+1. Prepare through the initial login user while temporary public SSH remains open.
 2. Verify that the new admin user can SSH over the Tailnet and run the bounded
    sudo check.
 3. Harden SSH and remove public SSH only after verification succeeds.
 
-If preparation or verification fails, root/password SSH is left active so the
-server can be repaired through the original access path.
+If preparation or verification fails, the original public SSH access path is left
+active so the server can be repaired.
 
 Read the detailed model in
 [documentation/security-model.md](documentation/security-model.md) and the

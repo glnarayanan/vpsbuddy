@@ -4,6 +4,7 @@ VPS_BOOTSTRAP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 reset_config() {
   VPS_HOST=""
+  VPS_LOGIN_USER="root"
   VPS_ADMIN_USER="deploy"
   VPS_PUBKEY="${HOME}/.ssh/id_ed25519.pub"
   VPS_IDENTITY=""
@@ -31,7 +32,8 @@ Usage:
   vps-bootstrap doctor [options]
 
 Options:
-  --host <host>                 Public VPS address for the initial root SSH login.
+  --host <host>                 Public VPS address for the initial SSH login.
+  --login-user <name>           Initial SSH user. Default: root. Use ubuntu/ec2-user/etc. for sudo-first images.
   --user <name>                 Admin sudo user to create. Default: deploy.
   --pubkey <path>               Public key to install. Default: ~/.ssh/id_ed25519.pub.
   --identity <path>             Private key used to verify Tailnet login. Default: pubkey without .pub.
@@ -46,8 +48,8 @@ Options:
   --dry-run                     Print the phased plan without opening SSH connections.
   -h, --help                    Show this help.
 
-The tool assumes the first connection is root@<host> with password auth. It does
-not store or pass the root password; OpenSSH prompts for it normally. Before
+The tool assumes the first connection is password SSH as --login-user. It does
+not store or pass the login password; OpenSSH and sudo prompt normally. Before
 that first connection, paste the VPS SSH host public key from your provider
 console so the bootstrap can pin the host instead of trusting the first key seen.
 
@@ -136,6 +138,15 @@ parse_args() {
         ;;
       --host=*)
         VPS_HOST="${1#*=}"
+        shift
+        ;;
+      --login-user)
+        require_option_value "$1" "${2-}" || return 1
+        VPS_LOGIN_USER="$2"
+        shift 2
+        ;;
+      --login-user=*)
+        VPS_LOGIN_USER="${1#*=}"
         shift
         ;;
       --user)
@@ -231,10 +242,11 @@ parse_args() {
   fi
 
   if [[ -n "$VPS_HOST" && "$VPS_HOST" == *@* ]]; then
-    error "--host expects a hostname or IP only; root@ is added automatically"
+    error "--host expects a hostname or IP only; pass the SSH username with --login-user"
     return 1
   fi
 
+  validate_admin_user "$VPS_LOGIN_USER" || return 1
   validate_admin_user "$VPS_ADMIN_USER" || return 1
   validate_hostname "$VPS_HOSTNAME" || return 1
 
@@ -1284,7 +1296,10 @@ ensure_admin_user() {
   chmod 600 "$home_dir/.ssh/authorized_keys"
 
   if ! grep -qxF "$public_key" "$home_dir/.ssh/authorized_keys"; then
+    log "installing public key for $admin_user"
     printf '%s\n' "$public_key" >>"$home_dir/.ssh/authorized_keys"
+  else
+    log "public key already present for $admin_user"
   fi
 
   chown "$admin_user:$admin_user" "$home_dir/.ssh/authorized_keys"
@@ -1526,12 +1541,24 @@ esac
 REMOTE_SCRIPT_BODY
 }
 
+build_prepare_command() {
+  local login_user="$1"
+  local host="$2"
+  local remote_command="bash -s"
+
+  if [[ "$login_user" != "root" ]]; then
+    remote_command="sudo bash -s"
+  fi
+
+  printf 'paste host public key -> temporary known_hosts; stream config + script | ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
+    "$(shell_quote "$login_user@$host")" \
+    "$(shell_quote "$remote_command")"
+}
+
 build_root_prepare_command() {
   local host="$1"
 
-  printf 'paste host public key -> temporary known_hosts; stream config + script | ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
-    "$(shell_quote "root@$host")" \
-    "$(shell_quote "bash -s")"
+  build_prepare_command root "$host"
 }
 
 build_admin_verify_command() {
@@ -1582,6 +1609,11 @@ parse_prepare_tailnet_ip() {
 run_remote_prepare() {
   local public_key="$1"
   local known_hosts_file="$2"
+  local remote_command="bash -s"
+
+  if [[ "$VPS_LOGIN_USER" != "root" ]]; then
+    remote_command="sudo bash -s"
+  fi
 
   {
     generate_remote_config_prelude prepare "$public_key"
@@ -1592,8 +1624,8 @@ run_remote_prepare() {
       -o UserKnownHostsFile="$known_hosts_file" \
       -o HostKeyAlias=vps-bootstrap-target \
       -o StrictHostKeyChecking=yes \
-      "root@$VPS_HOST" \
-      'bash -s' -- \
+      "$VPS_LOGIN_USER@$VPS_HOST" \
+      "$remote_command" -- \
       prepare
 }
 
@@ -1643,6 +1675,7 @@ Dry run: no SSH connections will be opened.
 
 Configuration:
   host: $VPS_HOST
+  initial login user: $VPS_LOGIN_USER
   admin user: $VPS_ADMIN_USER
   public key: $VPS_PUBKEY
   identity: $VPS_IDENTITY
@@ -1653,8 +1686,8 @@ Configuration:
   sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')
   public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')
 
-Phase 1: prepare as root
-  $(build_root_prepare_command "$VPS_HOST")
+Phase 1: prepare through $VPS_LOGIN_USER
+  $(build_prepare_command "$VPS_LOGIN_USER" "$VPS_HOST")
 
 Phase 2: verify Tailnet key login
   $(build_admin_verify_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
@@ -1883,13 +1916,13 @@ run_bootstrap() {
   prepare_log="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap.XXXXXX")"
   trap 'rm -f "$prepare_log" "$known_hosts_file"' RETURN
 
-  printf '[vps-bootstrap] Phase 1: prepare as root. OpenSSH will prompt for the root password.\n'
+  printf '[vps-bootstrap] Phase 1: prepare through %s. OpenSSH and sudo may prompt for passwords.\n' "$VPS_LOGIN_USER"
   run_remote_prepare "$public_key" "$known_hosts_file" 2>&1 | tee "$prepare_log"
 
   prepare_output="$(cat "$prepare_log")"
   tailnet_ip="$(parse_prepare_tailnet_ip "$prepare_output")"
   if [[ -z "$tailnet_ip" ]]; then
-    error "could not find Tailnet IP in prepare output; root/password SSH was not disabled"
+    error "could not find Tailnet IP in prepare output; public password SSH was not disabled"
     return 1
   fi
 

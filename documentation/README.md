@@ -23,6 +23,12 @@ Bootstrap a fresh VPS with the default minimal posture:
 bin/vps-bootstrap --host 203.0.113.10 --hostname app-01
 ```
 
+Bootstrap a provider image that starts with an `ubuntu` sudo user:
+
+```bash
+bin/vps-bootstrap --host 203.0.113.10 --login-user ubuntu --user ubuntu --hostname app-01
+```
+
 Bootstrap an agent-ready host with optional developer CLIs:
 
 ```bash
@@ -31,7 +37,11 @@ bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --install-agent-clis
 
 ## Useful Options
 
-- `--user <name>`: admin sudo user to create. Defaults to `deploy`.
+- `--login-user <name>`: initial SSH user. Defaults to `root`; use `ubuntu`,
+  `ec2-user`, or another sudo-capable image user when the provider disables
+  direct root SSH.
+- `--user <name>`: admin sudo user to create or reuse after login. Defaults to
+  `deploy`.
 - `--pubkey <path>`: public key to install. Defaults to
   `~/.ssh/id_ed25519.pub`.
 - `--identity <path>`: private key used for Tailnet verification. Defaults to
@@ -50,9 +60,11 @@ bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --install-agent-clis
 - Paste the VPS SSH host public key from the provider console when prompted.
   This is the server host key, not your local user key and not only a SHA256
   fingerprint.
-- The prepare phase temporarily keeps public root/password SSH available. The
-  harden phase runs only after Tailnet admin SSH and bounded sudo verification
-  pass.
+- `--pubkey` is your local login public key to install for the admin user. It is
+  expected to be absent on a fresh VPS before the prepare phase.
+- The prepare phase temporarily keeps the original public password SSH path
+  available. The harden phase runs only after Tailnet admin SSH and bounded sudo
+  verification pass.
 - Default passwordless sudo is limited to root-owned `vps-agent-*` helpers under
   `/usr/local/sbin`.
 - Helper calls append best-effort JSONL audit events to

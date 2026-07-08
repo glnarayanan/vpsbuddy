@@ -19,7 +19,7 @@ images. It is not a guarantee that every provider image has been smoke-tested.
 
 | Capability                           | Required | Why                                                           |
 | ------------------------------------ | -------- | ------------------------------------------------------------- |
-| Initial `root@host` password SSH     | Yes      | The prepare phase uses temporary root access.                 |
+| Initial password SSH login           | Yes      | Use `--login-user root` or a sudo-capable image user.         |
 | systemd                              | Yes      | Timers and service management assume systemd.                 |
 | OpenSSH server                       | Yes      | The hardening phase writes OpenSSH config.                    |
 | UFW or firewalld path                | Yes      | Host firewall commands are generated for supported families.  |
@@ -32,7 +32,7 @@ images. It is not a guarantee that every provider image has been smoke-tested.
 | Dependency         | Required    | Notes                                                           |
 | ------------------ | ----------- | --------------------------------------------------------------- |
 | Bash               | Yes         | Runs the local CLI and tests.                                   |
-| OpenSSH client     | Yes         | Used for public root SSH and Tailnet verification.              |
+| OpenSSH client     | Yes         | Used for initial SSH and Tailnet verification.                  |
 | Local SSH key pair | Yes         | Public key is installed for the admin user.                     |
 | `make`             | Recommended | Runs local checks.                                              |
 | ShellCheck         | Optional    | `make lint` uses it when installed and falls back to `bash -n`. |
