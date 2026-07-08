@@ -22,6 +22,8 @@ make lint
 
 `make lint` uses ShellCheck when it is installed. If ShellCheck is unavailable, it falls back to `bash -n` syntax checks.
 
+The scheduled OpenSSF Scorecard workflow pins `ossf/scorecard-action` to a concrete upstream release tag. If GitHub cannot resolve that tag, update it to the current upstream release instead of using a missing floating major tag.
+
 To match CI locally on macOS:
 
 ```bash
