@@ -8,7 +8,7 @@ quick start live in [../README.md](../README.md).
 Inspect a bootstrap plan without opening SSH:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --dry-run
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --dry-run
 ```
 
 Run a read-only readiness audit:
@@ -20,26 +20,25 @@ bin/vps-bootstrap doctor --host 203.0.113.10
 Bootstrap a fresh VPS with the default minimal posture:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --hostname app-01
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01
 ```
 
-Bootstrap a provider image that starts with an `ubuntu` sudo user:
+Reuse the provider's initial SSH user as the managed admin user:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --login-user ubuntu --user ubuntu --hostname app-01
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --user your-provider-user --hostname app-01
 ```
 
 Bootstrap an agent-ready host with optional developer CLIs:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --install-agent-clis
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --install-agent-clis
 ```
 
 ## Useful Options
 
-- `--login-user <name>`: initial SSH user. Defaults to `root`; use `ubuntu`,
-  `ec2-user`, or another sudo-capable image user when the provider disables
-  direct root SSH.
+- `--login-user <name>`: provider's initial SSH user. Required for bootstrap and
+  dry-run.
 - `--user <name>`: admin sudo user to create or reuse after login. Defaults to
   `deploy`.
 - `--pubkey <path>`: public key to install. Defaults to
@@ -64,7 +63,14 @@ bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --install-agent-clis
   expected to be absent on a fresh VPS before the prepare phase.
 - The prepare phase temporarily keeps the original public password SSH path
   available. The harden phase runs only after Tailnet admin SSH and bounded sudo
-  verification pass.
+  verification pass and you type `yes` after manually checking SSH from another
+  terminal.
+- For non-root `--login-user` values, the CLI uploads a temporary prepare script
+  and then runs it with interactive `sudo` so password prompts stay attached to
+  your terminal.
+- If you decline hardening, rerun the same command later. The prepare phase is
+  safe to repeat and will re-check existing user, key, Tailscale, and sudo state
+  before asking again.
 - Default passwordless sudo is limited to root-owned `vps-agent-*` helpers under
   `/usr/local/sbin`.
 - Helper calls append best-effort JSONL audit events to

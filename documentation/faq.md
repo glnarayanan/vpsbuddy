@@ -9,9 +9,8 @@ choose later.
 ## Can I run it on an existing production server?
 
 That is not the intended alpha path. The script is designed for fresh VPS hosts
-where temporary password SSH is still available for `root` or a sudo-capable
-image user such as `ubuntu`, and there is no existing application state to
-preserve.
+where temporary password SSH is still available for the provider's initial SSH
+user, and there is no existing application state to preserve.
 
 For an existing server, inspect dry-run output and the generated behavior first.
 You are responsible for understanding how it interacts with existing users,
@@ -36,7 +35,14 @@ and continues.
 
 To avoid lockout. The original public password SSH path remains available until
 the script verifies that the new admin user can SSH over the Tailnet and run the
-bounded sudo check. Only then does the harden phase remove public SSH.
+bounded sudo check, and until you confirm that you manually verified SSH from
+another terminal. Only then does the harden phase remove public SSH.
+
+## What if I am not ready to disable password SSH?
+
+Answer anything other than `yes` at the hardening prompt. The script leaves the
+original public SSH path available and exits cleanly. Rerun the same command
+after you have verified SSH; completed prepare work is checked again and reused.
 
 ## Does it store my API keys or CLI tokens?
 

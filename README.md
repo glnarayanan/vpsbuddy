@@ -35,8 +35,8 @@ testing, but public releases should be treated as early and security-sensitive.
 
 ## Requirements
 
-- A fresh VPS where you can initially SSH with password authentication as
-  `root`, `ubuntu`, `ec2-user`, or another sudo-capable login user.
+- A fresh VPS where you can initially SSH with password authentication as the
+  provider's initial SSH user.
 - A local SSH public/private key pair.
 - Access to the VPS provider console so you can copy the server SSH host public
   key before the first connection.
@@ -52,13 +52,13 @@ have audited the generated dry-run output and are prepared to recover it.
 Inspect the plan first:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --dry-run
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --dry-run
 ```
 
 Run the bootstrap from your laptop or workstation:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --hostname app-01
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01
 ```
 
 Useful options:
@@ -66,7 +66,7 @@ Useful options:
 ```bash
 bin/vps-bootstrap \
   --host 203.0.113.10 \
-  --login-user root \
+  --login-user your-provider-user \
   --user deploy \
   --pubkey ~/.ssh/id_ed25519.pub \
   --identity ~/.ssh/id_ed25519 \
@@ -74,13 +74,13 @@ bin/vps-bootstrap \
   --enable-tailscale-ssh
 ```
 
-For cloud images that start with `ubuntu` instead of direct root login:
+When the provider's initial SSH user should also be the managed admin user:
 
 ```bash
 bin/vps-bootstrap \
   --host 203.0.113.10 \
-  --login-user ubuntu \
-  --user ubuntu \
+  --login-user your-provider-user \
+  --user your-provider-user \
   --pubkey ~/.ssh/id_ed25519.pub \
   --identity ~/.ssh/id_ed25519 \
   --hostname app-01
@@ -92,7 +92,7 @@ HTTPS should remain closed.
 To install optional developer CLIs, pass `--install-agent-clis`:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --hostname app-01 --install-agent-clis
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --install-agent-clis
 ```
 
 After setup with that option, SSH over the Tailnet and authenticate those CLIs:
@@ -111,10 +111,16 @@ verified:
 1. Prepare through the initial login user while temporary public SSH remains open.
 2. Verify that the new admin user can SSH over the Tailnet and run the bounded
    sudo check.
-3. Harden SSH and remove public SSH only after verification succeeds.
+3. Ask you to verify SSH from another terminal and type `yes`.
+4. Harden SSH and remove public SSH only after automated and manual verification
+   succeed.
 
 If preparation or verification fails, the original public SSH access path is left
 active so the server can be repaired.
+
+If you do not confirm hardening, the script leaves password/public SSH available
+and exits cleanly. Rerun the same command later; it will re-check the completed
+setup and continue to the hardening confirmation.
 
 Read the detailed model in
 [documentation/security-model.md](documentation/security-model.md) and the
@@ -127,7 +133,7 @@ Before cutting or trusting a release:
 
 ```bash
 make check
-bin/vps-bootstrap --host 203.0.113.10 --hostname smoke-01 --dry-run
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname smoke-01 --dry-run
 ```
 
 For a real VPS smoke test, use a disposable fresh instance and verify:

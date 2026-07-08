@@ -79,7 +79,7 @@ test_parse_args_sets_defaults_and_flags() {
   reset_config
   parse_args \
     --host 203.0.113.10 \
-    --login-user ubuntu \
+    --login-user admin \
     --user ops \
     --pubkey tests/fixtures/id_ed25519.pub \
     --identity tests/fixtures/identity_fixture \
@@ -90,7 +90,7 @@ test_parse_args_sets_defaults_and_flags() {
     --dry-run
 
   assert_eq "parse host" "203.0.113.10" "$VPS_HOST"
-  assert_eq "parse login user" "ubuntu" "$VPS_LOGIN_USER"
+  assert_eq "parse login user" "admin" "$VPS_LOGIN_USER"
   assert_eq "parse admin user" "ops" "$VPS_ADMIN_USER"
   assert_eq "parse pubkey" "tests/fixtures/id_ed25519.pub" "$VPS_PUBKEY"
   assert_eq "parse identity" "tests/fixtures/identity_fixture" "$VPS_IDENTITY"
@@ -104,21 +104,21 @@ test_parse_args_sets_defaults_and_flags() {
 
 test_parse_args_supports_installing_agent_clis() {
   reset_config
-  parse_args --host example.test --install-agent-clis
+  parse_args --host example.test --login-user admin --install-agent-clis
 
   assert_eq "install agent clis enables install" "1" "$VPS_INSTALL_AGENT_CLIS"
 }
 
 test_parse_args_supports_web_equals_false() {
   reset_config
-  parse_args --host example.test --web=false
+  parse_args --host example.test --login-user admin --web=false
 
   assert_eq "web=false disables public web" "0" "$VPS_WEB"
 }
 
 test_parse_args_supports_skipping_agent_clis() {
   reset_config
-  parse_args --host example.test --skip-agent-clis
+  parse_args --host example.test --login-user admin --skip-agent-clis
 
   assert_eq "skip agent clis disables install" "0" "$VPS_INSTALL_AGENT_CLIS"
 }
@@ -326,29 +326,32 @@ test_dry_run_prints_rollback_safe_phase_ordering() {
   output="$(
     main \
       --host 203.0.113.10 \
+      --login-user admin \
       --pubkey tests/fixtures/id_ed25519.pub \
       --identity tests/fixtures/identity_fixture \
       --dry-run
   )"
 
   assert_contains "dry-run announces no remote mutation" "$output" "Dry run: no SSH connections will be opened."
-  assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare through root"
+  assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare through admin"
   assert_contains "dry-run includes pinned host key note" "$output" "temporary known_hosts"
   assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
   assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: skip"
   assert_contains "dry-run explains skipped agent auth" "$output" "pass --install-agent-clis"
   assert_not_contains "dry-run omits post setup auth command when skipped" "$output" "vps-agent-auth --all"
+  assert_contains "dry-run includes manual harden checkpoint" "$output" "Manual checkpoint"
   assert_contains "dry-run includes harden phase" "$output" "Phase 3: harden over Tailnet"
   assert_order "dry-run verifies before hardening" "$output" "Phase 2: verify Tailnet key login" "Phase 3: harden over Tailnet"
-  assert_order "dry-run prepares before verification" "$output" "Phase 1: prepare through root" "Phase 2: verify Tailnet key login"
+  assert_order "dry-run prepares before verification" "$output" "Phase 1: prepare through admin" "Phase 2: verify Tailnet key login"
 }
 
 test_build_prepare_command_uses_sudo_for_non_root_login_user() {
   local command
-  command="$(build_prepare_command "ubuntu" "203.0.113.10")"
+  command="$(build_prepare_command "admin" "203.0.113.10")"
 
-  assert_contains "prepare command targets login user" "$command" "ubuntu@203.0.113.10"
-  assert_contains "prepare command uses sudo for non-root" "$command" "sudo\\ bash\\ -s"
+  assert_contains "prepare command targets login user" "$command" "admin@203.0.113.10"
+  assert_contains "prepare command uploads script for non-root" "$command" "upload temporary script with scp"
+  assert_contains "prepare command uses sudo for non-root" "$command" "sudo\\ bash"
 }
 
 test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip() {
@@ -399,7 +402,7 @@ test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
 
 test_parse_args_sets_default_user() {
   reset_config
-  parse_args --host example.test
+  parse_args --host example.test --login-user admin
 
   assert_eq "default user is deploy" "deploy" "$VPS_ADMIN_USER"
 }
@@ -412,6 +415,16 @@ test_parse_args_requires_host() {
   fi
 
   pass "missing host should fail"
+}
+
+test_parse_args_requires_login_user() {
+  reset_config
+  if parse_args --host example.test > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
+    fail "missing login user should fail"
+    return
+  fi
+
+  pass "missing login user should fail"
 }
 
 test_parse_args_doctor_does_not_require_host() {
@@ -513,6 +526,7 @@ test_parse_prepare_output_extracts_tailnet_ip
 test_remote_config_prelude_preserves_public_key_and_empty_hostname
 test_parse_args_sets_default_user
 test_parse_args_requires_host
+test_parse_args_requires_login_user
 test_parse_args_doctor_does_not_require_host
 test_remote_script_prepends_missing_sshd_include
 test_remote_script_installs_agent_helper_audit_logging

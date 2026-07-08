@@ -19,7 +19,7 @@ images. It is not a guarantee that every provider image has been smoke-tested.
 
 | Capability                           | Required | Why                                                           |
 | ------------------------------------ | -------- | ------------------------------------------------------------- |
-| Initial password SSH login           | Yes      | Use `--login-user root` or a sudo-capable image user.         |
+| Initial password SSH login           | Yes      | Pass the provider's initial SSH user with `--login-user`.     |
 | systemd                              | Yes      | Timers and service management assume systemd.                 |
 | OpenSSH server                       | Yes      | The hardening phase writes OpenSSH config.                    |
 | UFW or firewalld path                | Yes      | Host firewall commands are generated for supported families.  |
