@@ -62,7 +62,8 @@ bin/vps-bootstrap --host <public-ip> --hostname smoke-01
 
 During the run:
 
-- Paste the server SSH host public key from the provider console.
+- Paste the server SSH host public key when the provider exposes it; otherwise
+  press Enter, confirm the scanned fingerprint, and verify the pinned-key path.
 - Complete the interactive Tailscale login.
 - Watch for successful Tailnet SSH verification.
 - Confirm the harden phase runs only after verification.

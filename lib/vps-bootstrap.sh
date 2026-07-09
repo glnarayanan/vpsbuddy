@@ -50,8 +50,8 @@ Options:
 
 The tool uses --login-user for the first password SSH connection. It does not
 store or pass the login password; OpenSSH and sudo prompt normally. Before that
-first connection, paste the VPS SSH host public key from your provider console
-so the bootstrap can pin the host instead of trusting the first key seen.
+first connection, paste the provider SSH host key if available, or press Enter
+to scan the live host key and confirm its fingerprint before pinning it.
 
 The doctor command performs local/read-only checks only. Run it from your
 workstation before bootstrap or on a bootstrapped VPS after setup.
@@ -349,16 +349,92 @@ validate_host_public_key_line() {
   esac
 }
 
-prompt_host_public_key() {
-  local key_line
+extract_keyscan_public_key() {
+  awk '
+    $1 !~ /^#/ && $2 ~ /^(ssh-|ecdsa-|sk-)/ {
+      $1 = ""
+      sub(/^ /, "")
+      print
+      exit
+    }
+  '
+}
+
+host_public_key_fingerprint() {
+  local key_line="$1"
+
+  printf '%s\n' "$key_line" | ssh-keygen -lf - 2> /dev/null
+}
+
+scan_host_public_key() {
+  local keyscan_output key_line
+
+  if ! command -v ssh-keyscan > /dev/null 2>&1; then
+    error "ssh-keyscan is required when the provider does not publish the SSH host key"
+    return 1
+  fi
+
+  keyscan_output="$(ssh-keyscan -T 10 "$VPS_HOST" 2> /dev/null)" || {
+    error "could not scan SSH host key from $VPS_HOST"
+    return 1
+  }
+  key_line="$(printf '%s\n' "$keyscan_output" | extract_keyscan_public_key)"
+  if [[ -z "$key_line" ]]; then
+    error "could not find an OpenSSH host key in ssh-keyscan output for $VPS_HOST"
+    return 1
+  fi
+
+  validate_host_public_key_line "$key_line" || return 1
+  printf '%s\n' "$key_line"
+}
+
+confirm_scanned_host_public_key() {
+  local key_line="$1"
+  local fingerprint answer
+
+  fingerprint="$(host_public_key_fingerprint "$key_line")" || {
+    error "could not calculate scanned SSH host key fingerprint"
+    return 1
+  }
 
   cat >&2 << PROMPT
-[vps-bootstrap] Paste the VPS SSH host public key from your provider console.
-[vps-bootstrap] This is the server host key, not your user SSH key.
+[vps-bootstrap] Scanned SSH host key from $VPS_HOST:
+[vps-bootstrap]   $key_line
+[vps-bootstrap] Fingerprint:
+[vps-bootstrap]   $fingerprint
+[vps-bootstrap] If this is a fresh VPS and your provider does not expose a host key, type yes to trust and pin this key for bootstrap:
+PROMPT
+  IFS= read -r answer
+  case "$answer" in
+    yes | YES | Yes)
+      return 0
+      ;;
+    *)
+      error "SSH host key was not trusted; bootstrap stopped before connecting"
+      return 1
+      ;;
+  esac
+}
+
+prompt_host_public_key() {
+  local key_line
+  local scanned_key
+
+  cat >&2 << PROMPT
+[vps-bootstrap] If your provider shows the VPS SSH host public key, paste it here.
+[vps-bootstrap] If not, press Enter to scan the live SSH host key and confirm its fingerprint.
+[vps-bootstrap] This is the server host key, not your user login key.
 [vps-bootstrap] Example: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
-Host public key:
+Host public key, or Enter to scan:
 PROMPT
   IFS= read -r key_line
+  if [[ -z "$key_line" ]]; then
+    scanned_key="$(scan_host_public_key)" || return 1
+    confirm_scanned_host_public_key "$scanned_key" || return 1
+    printf '%s\n' "$scanned_key"
+    return 0
+  fi
+
   validate_host_public_key_line "$key_line" || return 1
   printf '%s\n' "$key_line"
 }
@@ -1553,13 +1629,13 @@ build_prepare_command() {
   local host="$2"
 
   if [[ "$login_user" == "root" ]]; then
-    printf 'paste host public key -> temporary known_hosts; stream config + script | ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
+    printf 'paste or scan host public key -> temporary known_hosts; stream config + script | ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
       "$(shell_quote "$login_user@$host")" \
       "$(shell_quote "bash -s")"
     return 0
   fi
 
-  printf 'paste host public key -> temporary known_hosts; upload temporary script with scp; ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
+  printf 'paste or scan host public key -> temporary known_hosts; upload temporary script with scp; ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
     "$(shell_quote "$login_user@$host")" \
     "$(shell_quote "sudo bash <remote-temp-script> prepare")"
 }
@@ -1840,7 +1916,7 @@ doctor_local_inputs() {
     doctor_fail "identity file missing or unreadable: $VPS_IDENTITY"
   fi
 
-  doctor_info "first SSH host key: paste the provider console OpenSSH host public key when bootstrap prompts"
+  doctor_info "first SSH host key: paste a provider key if available, or scan and confirm the fingerprint when bootstrap prompts"
   doctor_command ssh "root prepare, Tailnet verification, and harden phases"
   doctor_command nc "post-bootstrap public port checks from a non-Tailnet network"
 }

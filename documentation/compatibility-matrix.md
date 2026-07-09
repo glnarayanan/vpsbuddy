@@ -24,7 +24,7 @@ images. It is not a guarantee that every provider image has been smoke-tested.
 | OpenSSH server                       | Yes      | The hardening phase writes OpenSSH config.                    |
 | UFW or firewalld path                | Yes      | Host firewall commands are generated for supported families.  |
 | Outbound internet                    | Yes      | Packages, Tailscale, and CLI installers need outbound access. |
-| Provider-console SSH host public key | Yes      | The first SSH connection is pinned to this key.               |
+| SSH host key confirmation            | Yes      | Paste a provider key, or scan and confirm before pinning.     |
 | Tailscale login approval             | Yes      | Tailnet verification must succeed before hardening.           |
 
 ## Local Workstation
@@ -55,8 +55,7 @@ the release notes.
 
 - Existing production servers with manual SSH, firewall, or sudo customization.
 - Hosts without systemd.
-- Hosts where the provider cannot expose the SSH host public key before first
-  connection.
+- Hosts where SSH is unreachable before bootstrap.
 - Private networks where Tailscale login cannot complete.
 - Environments requiring FIPS, CIS, FedRAMP, PCI, or other formal compliance
   baselines.

@@ -69,7 +69,7 @@ or a compromised Tailnet administrator.
 
 | Threat                                     | Mitigation                                                                                                                                                                      |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First-connection SSH impersonation         | Prompt for the provider-console SSH host public key and use strict host-key checking.                                                                                           |
+| First-connection SSH impersonation         | Pin a provider-supplied host key when available; otherwise scan the live host key, require explicit fingerprint confirmation, and use strict host-key checking afterward.         |
 | Operator lockout during hardening          | Keep the original public password SSH path open until Tailnet admin SSH and sudo verification succeed.                                                                          |
 | Public SSH remains exposed after success   | Harden SSH only after verification and remove public SSH from UFW or firewalld.                                                                                                 |
 | Provider firewall keeps TCP 22 exposed     | Document provider firewall rules and require independent verification from a non-Tailnet network.                                                                               |

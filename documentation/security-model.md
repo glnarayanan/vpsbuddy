@@ -17,7 +17,7 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 
 ## Phased Rollback Protection
 
-Before the first remote phase, the local CLI prompts for the VPS SSH host public key from the provider console and pins it in a temporary `known_hosts` file. The script then uses strict host-key checking instead of trusting the first key seen.
+Before the first remote phase, the local CLI pins the VPS SSH host key in a temporary `known_hosts` file. If the provider exposes the host public key, the operator can paste it. If not, the CLI scans the live SSH host key, prints the key and fingerprint, and requires explicit confirmation before pinning it. The script then uses strict host-key checking for the rest of the run.
 
 The first remote phase connects as the required `--login-user` and runs as root directly when that user is root, or through an interactive `sudo bash` step for non-root sudo-capable image users. It creates or reuses the admin user, installs the selected `--pubkey`, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs developer CLIs, and configures the firewall with temporary public SSH still allowed.
 

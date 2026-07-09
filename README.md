@@ -20,8 +20,8 @@ testing, but public releases should be treated as early and security-sensitive.
 
 - Creates a non-root sudo admin user, defaulting to `deploy`.
 - Installs your local OpenSSH public key for that admin user.
-- Pins the first SSH connection to a host public key pasted from the VPS
-  provider console.
+- Pins the first SSH connection to a host public key pasted from the provider or
+  scanned and confirmed during bootstrap.
 - Installs and joins Tailscale interactively.
 - Verifies Tailnet SSH and bounded sudo before disabling public password
   SSH.
@@ -38,8 +38,8 @@ testing, but public releases should be treated as early and security-sensitive.
 - A fresh VPS where you can initially SSH with password authentication as the
   provider's initial SSH user.
 - A local SSH public/private key pair.
-- Access to the VPS provider console so you can copy the server SSH host public
-  key before the first connection.
+- Access to the VPS provider console for recovery and optional host-key
+  comparison.
 - Outbound internet access from the VPS for package installation and Tailscale
   login.
 - A Tailscale account and the ability to approve the interactive login URL.
@@ -138,7 +138,7 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
 
 For a real VPS smoke test, use a disposable fresh instance and verify:
 
-- The script prompts for and uses the provider SSH host public key.
+- The script pins the first SSH host key from provider input or a confirmed scan.
 - Tailscale login completes during the prepare phase.
 - `ssh deploy@<tailscale-ip>` succeeds after setup.
 - `sudo -n /usr/local/sbin/vps-agent-sudo-check` succeeds for the admin user.

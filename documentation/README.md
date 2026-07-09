@@ -56,9 +56,10 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
 
 ## Operator Notes
 
-- Paste the VPS SSH host public key from the provider console when prompted.
-  This is the server host key, not your local user key and not only a SHA256
-  fingerprint.
+- If the provider shows the VPS SSH host public key, paste it when prompted. If
+  it does not, press Enter to scan the live SSH host key, review the fingerprint,
+  and type `yes` to pin it for bootstrap. This is the server host key, not your
+  local user key and not only a SHA256 fingerprint.
 - `--pubkey` is your local login public key to install for the admin user. It is
   expected to be absent on a fresh VPS before the prepare phase.
 - The prepare phase temporarily keeps the original public password SSH path

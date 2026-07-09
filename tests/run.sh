@@ -306,13 +306,19 @@ test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy() {
 }
 
 test_host_public_key_validation_and_known_hosts() {
-  local known_hosts
+  local known_hosts scanned_key
 
   validate_host_public_key_line "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample"
   if validate_host_public_key_line "SHA256:not-a-public-key" > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
     fail "fingerprint should not be accepted as host public key"
     return
   fi
+
+  scanned_key="$(
+    printf '# comment\n203.0.113.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample\n' |
+      extract_keyscan_public_key
+  )"
+  assert_eq "keyscan parser extracts public key line" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample" "$scanned_key"
 
   known_hosts="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-test-known-hosts.XXXXXX")"
   write_known_hosts_file "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample" "$known_hosts"

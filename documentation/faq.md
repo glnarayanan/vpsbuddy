@@ -16,14 +16,17 @@ For an existing server, inspect dry-run output and the generated behavior first.
 You are responsible for understanding how it interacts with existing users,
 SSH, firewall, sudo, and service configuration.
 
-## Why require the server SSH host public key from the provider console?
+## What if my provider does not show the server SSH host public key?
 
-The first connection is the riskiest one. Pasting the server host public key lets
-the CLI use strict host-key checking instead of trusting whatever key appears on
-first contact.
+The first connection is the riskiest one. If the provider shows the OpenSSH host
+public key, paste it. If it does not, press Enter at the prompt; the CLI scans
+the live SSH host key, shows the key and fingerprint, and asks you to type `yes`
+before pinning it for bootstrap.
 
-Use the OpenSSH host public key line, such as `ssh-ed25519 AAAA...`. Do not
-paste your local user public key, a private key, or only a SHA256 fingerprint.
+The scanned-key path is trust-on-first-use. It is still pinned before the first
+SSH login and reused for the rest of the run, but it cannot prove provider
+identity by itself. Do not paste your local user public key, a private key, or
+only a SHA256 fingerprint.
 
 ## Should my local SSH key already be on the VPS?
 
