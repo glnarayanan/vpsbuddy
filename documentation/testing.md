@@ -58,3 +58,5 @@ The tests cover:
 - Safe SSH include placement when a distro image lacks `/etc/ssh/sshd_config.d` support in the main config.
 
 Tests must not connect to or mutate a real server. Use dry-run output, fixtures, and generated script inspection for local verification.
+
+When a generated helper is backed by a template in `lib/templates/`, tests should read that template directly instead of adding thin wrapper functions only for tests.

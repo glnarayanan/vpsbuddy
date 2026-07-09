@@ -232,7 +232,7 @@ test_remote_script_installs_update_timers() {
 
 test_agent_auth_helper_uses_native_auth_only() {
   local helper
-  helper="$(generate_agent_auth_helper_script)"
+  helper="$(cat lib/templates/vps-agent-auth.sh)"
 
   assert_contains "helper supports all mode" "$helper" "--all"
   assert_contains "helper supports status mode" "$helper" "--status"
@@ -250,14 +250,6 @@ test_agent_auth_helper_uses_native_auth_only() {
   assert_not_contains "helper does not reference auth env file" "$helper" "agent-cli.env"
   assert_not_contains "helper does not reference claude" "$helper" "claude"
   assert_not_contains "helper does not use third-party grok settings" "$helper" "user-settings.json"
-}
-
-test_agent_auth_helper_renders_template() {
-  local helper template
-  helper="$(generate_agent_auth_helper_script)"
-  template="$(cat lib/templates/vps-agent-auth.sh)"
-
-  assert_eq "agent auth helper renders template" "$template" "$helper"
 }
 
 test_remote_script_installs_agent_auth_helper() {
@@ -520,7 +512,6 @@ test_remote_script_contains_supported_distros_and_tailscale_flow
 test_remote_script_installs_agent_clis_and_supports_auth_modes
 test_remote_script_installs_update_timers
 test_agent_auth_helper_uses_native_auth_only
-test_agent_auth_helper_renders_template
 test_remote_script_installs_agent_auth_helper
 test_sudoers_policy_is_scoped_by_default
 test_sudoers_policy_supports_full_sudo_escape_hatch

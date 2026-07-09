@@ -448,10 +448,6 @@ write_known_hosts_file() {
   printf 'vps-bootstrap-target %s\n' "$key_line" > "$output"
 }
 
-generate_agent_auth_helper_script() {
-  cat "$VPS_BOOTSTRAP_LIB_DIR/templates/vps-agent-auth.sh"
-}
-
 generate_ufw_rules() {
   local phase="$1"
   local web_enabled="$2"
@@ -1638,12 +1634,6 @@ build_prepare_command() {
   printf 'paste or scan host public key -> temporary known_hosts; upload temporary script with scp; ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
     "$(shell_quote "$login_user@$host")" \
     "$(shell_quote "sudo bash <remote-temp-script> prepare")"
-}
-
-build_root_prepare_command() {
-  local host="$1"
-
-  build_prepare_command root "$host"
 }
 
 build_admin_verify_command() {
