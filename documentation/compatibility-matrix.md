@@ -17,15 +17,15 @@ images. It is not a guarantee that every provider image has been smoke-tested.
 
 ## Required Host Capabilities
 
-| Capability                           | Required | Why                                                           |
-| ------------------------------------ | -------- | ------------------------------------------------------------- |
-| Initial password SSH login           | Yes      | Pass the provider's initial SSH user with `--login-user`.     |
-| systemd                              | Yes      | Timers and service management assume systemd.                 |
-| OpenSSH server                       | Yes      | The hardening phase writes OpenSSH config.                    |
-| UFW or firewalld path                | Yes      | Host firewall commands are generated for supported families.  |
-| Outbound internet                    | Yes      | Packages, Tailscale, and CLI installers need outbound access. |
-| SSH host key confirmation            | Yes      | Paste a provider key, or scan and confirm before pinning.     |
-| Tailscale login approval             | Yes      | Tailnet verification must succeed before hardening.           |
+| Capability                 | Required | Why                                                           |
+| -------------------------- | -------- | ------------------------------------------------------------- |
+| Initial password SSH login | Yes      | Pass the provider's initial SSH user with `--login-user`.     |
+| systemd                    | Yes      | Timers and service management assume systemd.                 |
+| OpenSSH server             | Yes      | The hardening phase writes OpenSSH config.                    |
+| UFW or firewalld path      | Yes      | Host firewall commands are generated for supported families.  |
+| Outbound internet          | Yes      | Packages, Tailscale, and CLI installers need outbound access. |
+| SSH host key confirmation  | Yes      | Paste a provider key, or scan and confirm before pinning.     |
+| Tailscale login approval   | Yes      | Tailnet verification must succeed before hardening.           |
 
 ## Local Workstation
 
