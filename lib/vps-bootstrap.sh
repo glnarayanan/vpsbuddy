@@ -1141,7 +1141,8 @@ install_codex_cli() {
   run_as_admin "$home_dir" 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
 
   if ! link_admin_command "$home_dir" codex; then
-    fail "Codex CLI installer did not put codex on $admin_user PATH"
+    warn "Codex CLI installer did not put codex on $admin_user PATH"
+    return 1
   fi
 
   run_as_admin "$home_dir" 'codex --version' >/dev/null
@@ -1162,7 +1163,8 @@ install_grok_cli() {
   fi
 
   if [[ ! -x "$grok_bin" ]]; then
-    fail "Grok CLI installer did not create $grok_bin"
+    warn "Grok CLI installer did not create $grok_bin"
+    return 1
   fi
 
   install -d -m 0755 /usr/local/bin
@@ -1220,10 +1222,10 @@ install_agent_clis_if_requested() {
     return 0
   fi
 
-  install_codex_cli
-  remove_legacy_third_party_grok_cli
-  install_grok_cli
-  install_github_cli
+  install_codex_cli || warn "Codex CLI installation failed; continuing with bootstrap"
+  remove_legacy_third_party_grok_cli || warn "legacy third-party Grok CLI removal failed; continuing with bootstrap"
+  install_grok_cli || warn "Grok CLI installation failed; continuing with bootstrap"
+  install_github_cli || warn "GitHub CLI installation failed; continuing with bootstrap"
   install_agent_auth_helper
   install_agent_cli_update_timer
   print_agent_cli_versions
@@ -1288,18 +1290,21 @@ link_admin_command() {
 }
 
 printf '[vps-bootstrap] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
-run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
-link_admin_command codex
+if run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'; then
+  link_admin_command codex || true
+else
+  printf '[vps-bootstrap] warning: Codex CLI update failed; continuing with other agent CLI updates\n' >&2
+fi
 
 if run_as_admin 'command -v grok >/dev/null 2>&1'; then
   printf '[vps-bootstrap] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
-  run_as_admin 'grok update'
+  run_as_admin 'grok update' || printf '[vps-bootstrap] warning: Grok CLI update failed\n' >&2
 elif [[ -x "$home_dir/.grok/bin/grok" ]]; then
   printf '[vps-bootstrap] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
-  run_as_admin "$(printf '%q' "$home_dir/.grok/bin/grok") update"
+  run_as_admin "$(printf '%q' "$home_dir/.grok/bin/grok") update" || printf '[vps-bootstrap] warning: Grok CLI update failed\n' >&2
 else
   printf '[vps-bootstrap] installing Grok from xAI official installer; accepted mutable installer trust boundary\n' >&2
-  run_as_admin 'curl -fsSL https://x.ai/cli/install.sh | bash'
+  run_as_admin 'curl -fsSL https://x.ai/cli/install.sh | bash' || printf '[vps-bootstrap] warning: Grok CLI install failed\n' >&2
 fi
 
 link_admin_command grok || true
@@ -1445,7 +1450,11 @@ enable_tailscale_ssh_if_requested() {
   fi
 
   log "enabling Tailscale SSH on this node"
-  tailscale set --ssh
+  if ! tailscale set --ssh; then
+    warn "Tailscale SSH enable failed; OpenSSH over Tailnet remains the supported access path"
+    return 0
+  fi
+
   warn "Tailscale SSH also requires matching Tailnet ACL SSH rules"
 }
 
@@ -1581,7 +1590,6 @@ run_prepare() {
   set_requested_hostname
   install_agent_clis_if_requested
   ensure_tailscale_connected
-  enable_tailscale_ssh_if_requested
   configure_firewall prepare
   validate_prepare_state
 
@@ -1600,6 +1608,7 @@ run_harden() {
   configure_firewall harden
   write_sshd_hardening
   write_sudoers_policy "$full_sudo"
+  enable_tailscale_ssh_if_requested
 
   printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
   printf 'VPS_BOOTSTRAP_FIREWALL=%s\n' "$FIREWALL_BACKEND"
@@ -1703,6 +1712,36 @@ PROMPT
 [vps-bootstrap] The next run will re-check completed setup and continue to hardening after confirmation.
 SKIP
       return 1
+      ;;
+  esac
+}
+
+confirm_tailscale_ssh_acl_ready() {
+  local tailnet_ip="$1"
+  local answer
+
+  if [[ "$VPS_ENABLE_TAILSCALE_SSH" != "1" ]]; then
+    return 0
+  fi
+
+  cat >&2 << PROMPT
+[vps-bootstrap] --enable-tailscale-ssh was requested.
+[vps-bootstrap] Tailscale SSH can block normal OpenSSH over the Tailnet unless your Tailnet ACL SSH rules permit this user and node.
+[vps-bootstrap] Keep OpenSSH as the safe access path unless you have already configured and reviewed Tailscale SSH ACLs.
+[vps-bootstrap] Enable Tailscale SSH during hardening now? Type yes to enable, or anything else to skip it:
+PROMPT
+  IFS= read -r answer
+  case "$answer" in
+    yes | YES | Yes)
+      return 0
+      ;;
+    *)
+      VPS_ENABLE_TAILSCALE_SSH="0"
+      cat >&2 << SKIP
+[vps-bootstrap] Skipping Tailscale SSH. Bootstrap will still finish with OpenSSH over the Tailnet.
+[vps-bootstrap] To enable it later, configure Tailnet ACL SSH rules first, then run: sudo tailscale set --ssh
+SKIP
+      return 0
       ;;
   esac
 }
@@ -1819,7 +1858,7 @@ Configuration:
   identity: $VPS_IDENTITY
   hostname: ${VPS_HOSTNAME:-<server default>}
   public key fingerprint source: ${#public_key} bytes
-  Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'enabled' || printf 'disabled')
+  Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')
   developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')
   sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')
   public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')
@@ -1835,6 +1874,15 @@ Manual checkpoint:
 
 Phase 3: harden over Tailnet
   $(build_admin_harden_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
+
+Tailscale SSH:
+$(
+    if [[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]]; then
+      printf '  after verification, confirm Tailnet ACL SSH rules before enabling Tailscale SSH\n'
+    else
+      printf '  disabled; OpenSSH over Tailnet remains the access model\n'
+    fi
+  )
 
 Agent CLI authentication:
 $(
@@ -1915,7 +1963,7 @@ doctor_local_plan() {
   printf '\n== Bootstrap plan ==\n'
   doctor_info "admin user: $VPS_ADMIN_USER"
   doctor_info "hostname: ${VPS_HOSTNAME:-<server default>}"
-  doctor_info "Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'enabled' || printf 'disabled')"
+  doctor_info "Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')"
   doctor_info "developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')"
   doctor_info "sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')"
   doctor_info "public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')"
@@ -2073,6 +2121,7 @@ run_bootstrap() {
   if ! confirm_harden_after_manual_ssh_check "$tailnet_ip"; then
     return 0
   fi
+  confirm_tailscale_ssh_acl_ready "$tailnet_ip"
 
   printf '[vps-bootstrap] Phase 3: harden over Tailnet after successful key/sudo verification.\n'
   run_remote_harden "$tailnet_ip" "$public_key" "$known_hosts_file"

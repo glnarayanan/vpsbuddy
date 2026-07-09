@@ -60,7 +60,7 @@ server. The alpha default skips those installs; opt in only for servers that
 need them:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --install-agent-clis
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --install-agent-clis
 ```
 
 ## What does the default sudo policy allow?
@@ -94,8 +94,10 @@ Provider firewalls must be configured separately. See
 ## Does Tailscale SSH replace OpenSSH here?
 
 OpenSSH over the Tailnet is the default access model. `--enable-tailscale-ssh`
-also enables Tailscale SSH on the host, but Tailnet ACL SSH rules still need to
-be configured in the Tailscale admin console.
+is deferred until after OpenSSH verification and the manual hardening
+checkpoint, then the CLI asks for confirmation before running `tailscale set
+--ssh`. Configure Tailnet ACL SSH rules first; otherwise Tailscale SSH can block
+normal OpenSSH over the Tailnet.
 
 ## What should I test before trusting a release?
 

@@ -11,7 +11,7 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 - Public TCP 80/443 remain open by default for hosted web applications.
 - Unsolicited inbound traffic is denied by the host firewall.
 - The admin user has passwordless sudo by default only for root-owned `vps-agent-*` helpers so common agentic operations can work without raw broad root primitives.
-- Codex CLI, Grok CLI, and GitHub CLI are installed only when `--install-agent-clis` is passed, and authentication is deferred to the post-setup `vps-agent-auth` helper.
+- Codex CLI, Grok CLI, and GitHub CLI are installed only when `--install-agent-clis` is passed, and authentication is deferred to the post-setup `vps-agent-auth` helper. These installers are best-effort: an upstream CLI installer outage must not abort the security bootstrap.
 - Codex and Grok are updated every two days by `vps-agent-cli-update.timer` only when agent CLIs are installed.
 - OS packages are updated every two weeks by `vps-os-update.timer`; apt hosts also receive fourteen-day `unattended-upgrades` periodic configuration.
 
@@ -19,7 +19,7 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 
 Before the first remote phase, the local CLI pins the VPS SSH host key in a temporary `known_hosts` file. If the provider exposes the host public key, the operator can paste it. If not, the CLI scans the live SSH host key, prints the key and fingerprint, and requires explicit confirmation before pinning it. The script then uses strict host-key checking for the rest of the run.
 
-The first remote phase connects as the required `--login-user` and runs as root directly when that user is root, or through an interactive `sudo bash` step for non-root sudo-capable image users. It creates or reuses the admin user, installs the selected `--pubkey`, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs developer CLIs, and configures the firewall with temporary public SSH still allowed.
+The first remote phase connects as the required `--login-user` and runs as root directly when that user is root, or through an interactive `sudo bash` step for non-root sudo-capable image users. It creates or reuses the admin user, installs the selected `--pubkey`, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs developer CLIs, and configures the firewall with temporary public SSH still allowed. It does not enable Tailscale SSH before local Tailnet OpenSSH verification, because Tailscale SSH ACLs can block that verification path.
 
 The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n /usr/local/sbin/vps-agent-sudo-check`. After that automated check succeeds, the CLI asks the operator to verify SSH from another terminal and type `yes` before the harden phase runs over the Tailnet connection.
 
@@ -31,7 +31,7 @@ The harden phase also writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.
 
 ## Developer CLI Credentials
 
-When `--install-agent-clis` is used, `vps-agent-auth` runs native auth flows where available and prints setup checks for API-key based tools after bootstrap is complete.
+When `--install-agent-clis` is used, `vps-agent-auth` runs native auth flows where available and prints setup checks for API-key based tools after bootstrap is complete. Codex uses OpenAI's standalone Linux installer with `CODEX_NON_INTERACTIVE=1`, Grok uses xAI's official Linux installer, and GitHub CLI uses GitHub's signed Linux package repositories for apt or rpm hosts. Homebrew is not installed on fresh VPS images by default, so it is not the server bootstrap default.
 
 The bootstrap script does not accept, upload, or store raw agent CLI tokens, API keys, or GitHub private keys. Each CLI handles its own auth state or configuration:
 
@@ -53,7 +53,7 @@ The Codex, Grok, and Tailscale installer paths intentionally trust official muta
 
 ## Tailscale SSH
 
-OpenSSH over the Tailnet is the default model. `--enable-tailscale-ssh` also runs `tailscale set --ssh` on the host, but Tailnet ACL SSH rules must still be configured in the Tailscale admin console.
+OpenSSH over the Tailnet is the default model. `--enable-tailscale-ssh` defers `tailscale set --ssh` until after automated Tailnet OpenSSH verification and the manual hardening checkpoint. The CLI asks for a second confirmation before enabling it, because Tailnet ACL SSH rules must permit the user and node or Tailscale SSH can block normal OpenSSH over the Tailnet.
 
 ## Provider Firewalls
 

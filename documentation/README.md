@@ -46,10 +46,11 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
 - `--identity <path>`: private key used for Tailnet verification. Defaults to
   the public key path without `.pub`.
 - `--hostname <name>`: hostname to set on the VPS and use for Tailscale.
-- `--enable-tailscale-ssh`: enable Tailscale SSH in addition to OpenSSH over
-  the Tailnet. Tailnet ACL SSH rules are still required.
-- `--install-agent-clis`: install Codex CLI, Grok CLI, GitHub CLI,
-  `vps-agent-auth`, and the agent CLI update timer.
+- `--enable-tailscale-ssh`: request Tailscale SSH after OpenSSH over the
+  Tailnet has been verified. The CLI asks for confirmation before enabling it
+  because Tailnet ACL SSH rules are still required.
+- `--install-agent-clis`: best-effort install of Codex CLI, Grok CLI, GitHub
+  CLI, `vps-agent-auth`, and the agent CLI update timer.
 - `--no-web` or `--web=false`: close public TCP 80/443 for private-only hosts.
 - `--full-sudo`: use broad `NOPASSWD:ALL` instead of the default bounded helper
   policy.
@@ -78,6 +79,9 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
   `/var/log/vps-agent-actions.log`.
 - Developer CLI authentication is never collected during bootstrap. When
   `--install-agent-clis` is used, authenticate later with `vps-agent-auth`.
+- Codex and Grok use their official standalone Linux installers. GitHub CLI
+  uses GitHub's signed apt/rpm package repositories on Linux rather than adding
+  Homebrew to the server.
 
 See [security-model.md](security-model.md), [threat-model.md](threat-model.md),
 and [release-process.md](release-process.md) before changing bootstrap or

@@ -200,11 +200,16 @@ test_remote_script_installs_agent_clis_and_supports_auth_modes() {
 
   assert_contains "remote script installs codex cli with official installer" "$script" "https://chatgpt.com/codex/install.sh"
   assert_contains "remote script installs codex non-interactively" "$script" "CODEX_NON_INTERACTIVE=1 sh"
+  assert_contains "remote script treats codex install as optional" "$script" "Codex CLI installation failed; continuing with bootstrap"
+  assert_not_contains "remote script does not fatally abort on missing codex binary" "$script" "fail \"Codex CLI installer did not put codex on"
   assert_contains "remote script installs official grok cli" "$script" "https://x.ai/cli/install.sh | bash"
   assert_contains "remote script installs grok cli as admin user" "$script" "sudo -H -u \"\$admin_user\""
+  assert_contains "remote script treats grok install as optional" "$script" "Grok CLI installation failed; continuing with bootstrap"
+  assert_not_contains "remote script does not fatally abort on missing grok binary" "$script" "fail \"Grok CLI installer did not create"
   assert_contains "remote script removes third-party grok package" "$script" "npm uninstall -g @vibe-kit/grok-cli"
   assert_contains "remote script installs github cli apt repo" "$script" "https://cli.github.com/packages stable main"
   assert_contains "remote script installs github cli rpm repo" "$script" "https://cli.github.com/packages/rpm/gh-cli.repo"
+  assert_contains "remote script treats github cli install as optional" "$script" "GitHub CLI installation failed; continuing with bootstrap"
   assert_contains "remote script records codex version" "$script" "VPS_BOOTSTRAP_CODEX_VERSION="
   assert_contains "remote script records grok version" "$script" "VPS_BOOTSTRAP_GROK_VERSION="
   assert_contains "remote script records github cli version" "$script" "VPS_BOOTSTRAP_GH_VERSION="
@@ -220,7 +225,9 @@ test_remote_script_installs_update_timers() {
 
   assert_contains "remote script installs agent cli updater" "$script" "/usr/local/sbin/vps-agent-cli-update"
   assert_contains "agent updater reruns codex installer" "$script" "https://chatgpt.com/codex/install.sh"
+  assert_contains "agent updater does not abort on codex failure" "$script" "Codex CLI update failed; continuing with other agent CLI updates"
   assert_contains "agent updater runs grok update" "$script" "grok update"
+  assert_contains "agent updater does not abort on grok failure" "$script" "Grok CLI update failed"
   assert_contains "agent updater installs two day timer" "$script" "OnUnitActiveSec=2d"
   assert_contains "remote script installs os updater" "$script" "/usr/local/sbin/vps-os-update"
   assert_contains "os updater runs apt unattended upgrade" "$script" "unattended-upgrade -d"
@@ -228,6 +235,17 @@ test_remote_script_installs_update_timers() {
   assert_contains "os updater supports yum update" "$script" "yum -y update"
   assert_contains "os updater installs two week timer" "$script" "OnUnitActiveSec=14d"
   assert_contains "apt periodic unattended upgrade is every fourteen days" "$script" 'APT::Periodic::Unattended-Upgrade "14";'
+}
+
+test_remote_script_defers_tailscale_ssh_until_harden() {
+  local script prepare_body harden_body
+  script="$(generate_remote_script)"
+  prepare_body="$(printf '%s\n' "$script" | awk '/^run_prepare\(\)/,/^}/')"
+  harden_body="$(printf '%s\n' "$script" | awk '/^run_harden\(\)/,/^}/')"
+
+  assert_not_contains "prepare does not enable tailscale ssh before verification" "$prepare_body" "enable_tailscale_ssh_if_requested"
+  assert_contains "harden can enable requested tailscale ssh" "$harden_body" "enable_tailscale_ssh_if_requested"
+  assert_order "tailscale ssh waits until hardening policy is written" "$harden_body" "write_sudoers_policy \"\$full_sudo\"" "enable_tailscale_ssh_if_requested"
 }
 
 test_agent_auth_helper_uses_native_auth_only() {
@@ -509,6 +527,7 @@ test_hardening_config_contains_required_directives
 test_ufw_rules_keep_public_ssh_until_harden_phase
 test_firewalld_rules_remove_public_ssh_and_keep_web
 test_remote_script_contains_supported_distros_and_tailscale_flow
+test_remote_script_defers_tailscale_ssh_until_harden
 test_remote_script_installs_agent_clis_and_supports_auth_modes
 test_remote_script_installs_update_timers
 test_agent_auth_helper_uses_native_auth_only

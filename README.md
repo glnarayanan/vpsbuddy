@@ -89,7 +89,8 @@ bin/vps-bootstrap \
 Use `--no-web` or `--web=false` for private-only servers where public HTTP and
 HTTPS should remain closed.
 
-To install optional developer CLIs, pass `--install-agent-clis`:
+To install optional developer CLIs, pass `--install-agent-clis`. These installs
+are best-effort so an upstream CLI installer outage does not stop SSH hardening:
 
 ```bash
 bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --install-agent-clis
