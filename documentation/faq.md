@@ -63,6 +63,13 @@ need them:
 bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --install-agent-clis
 ```
 
+## Does bootstrap set up swap?
+
+Yes. During prepare, it keeps active swap as-is. If no active swap exists, it
+creates and enables a root-owned `0600` `/swapfile` and adds it to `/etc/fstab`.
+The default size is `2G`; use `--swap-size 4G` to change it or `--no-swap` to
+skip swap setup. An unusable existing `/swapfile` is not overwritten.
+
 ## What does the default sudo policy allow?
 
 The admin user gets passwordless sudo only for root-owned `vps-agent-*` helper

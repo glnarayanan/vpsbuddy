@@ -98,6 +98,8 @@ test_parse_args_sets_defaults_and_flags() {
   assert_eq "parse tailscale ssh flag" "1" "$VPS_ENABLE_TAILSCALE_SSH"
   assert_eq "parse agent cli install default" "0" "$VPS_INSTALL_AGENT_CLIS"
   assert_eq "parse full sudo flag" "1" "$VPS_FULL_SUDO"
+  assert_eq "swap setup enabled by default" "1" "$VPS_SWAP_ENABLED"
+  assert_eq "default swap size" "2G" "$VPS_SWAP_SIZE"
   assert_eq "parse no web flag" "0" "$VPS_WEB"
   assert_eq "parse dry-run flag" "1" "$VPS_DRY_RUN"
 }
@@ -114,6 +116,29 @@ test_parse_args_supports_web_equals_false() {
   parse_args --host example.test --login-user admin --web=false
 
   assert_eq "web=false disables public web" "0" "$VPS_WEB"
+}
+
+test_parse_args_supports_swap_options() {
+  reset_config
+  parse_args --host example.test --login-user admin --swap-size 4G
+
+  assert_eq "swap size option" "4G" "$VPS_SWAP_SIZE"
+  assert_eq "swap remains enabled with custom size" "1" "$VPS_SWAP_ENABLED"
+
+  reset_config
+  parse_args --host example.test --login-user admin --no-swap
+
+  assert_eq "no-swap disables setup" "0" "$VPS_SWAP_ENABLED"
+}
+
+test_parse_args_rejects_invalid_swap_size() {
+  reset_config
+  if parse_args --host example.test --login-user admin --swap-size 0G > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
+    fail "invalid swap size should fail"
+    return
+  fi
+
+  pass "invalid swap size should fail"
 }
 
 test_parse_args_supports_skipping_agent_clis() {
@@ -188,6 +213,14 @@ test_remote_script_contains_supported_distros_and_tailscale_flow() {
   assert_contains "remote script supports apt" "$script" "apt-get update"
   assert_contains "remote script supports dnf" "$script" "dnf makecache"
   assert_contains "remote script supports yum" "$script" "yum makecache"
+  assert_contains "remote script installs swap tools" "$script" "firewalld util-linux"
+  assert_contains "remote script installs swap when enabled" "$script" "install_swap"
+  assert_contains "remote script keeps active swap" "$script" "active swap already exists; leaving it unchanged"
+  assert_contains "remote script refuses inactive swap overwrite" "$script" "refusing to overwrite it"
+  assert_contains "remote script persists swap in fstab" "$script" "/swapfile none swap sw 0 0"
+  assert_contains "remote script formats swap file" "$script" "mkswap \"\$swap_file\""
+  assert_contains "remote script activates swap file" "$script" "swapon \"\$swap_file\""
+  assert_contains "remote script installs swap before services" "$script" $'  install_required_packages\n  install_swap\n  enable_service'
   assert_contains "remote script leaves update cadence to managed timer" "$script" "vps-os-update.timer controls the two-week update cadence"
   assert_contains "remote script installs tailscale officially" "$script" "https://tailscale.com/install.sh"
   assert_contains "remote script uses interactive tailscale up" "$script" "tailscale up --hostname"
@@ -353,6 +386,7 @@ test_dry_run_prints_rollback_safe_phase_ordering() {
   assert_contains "dry-run includes pinned host key note" "$output" "temporary known_hosts"
   assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
   assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: skip"
+  assert_contains "dry-run includes swap config" "$output" "swap: ensure active (2G if no existing swap)"
   assert_contains "dry-run explains skipped agent auth" "$output" "pass --install-agent-clis"
   assert_not_contains "dry-run omits post setup auth command when skipped" "$output" "vps-agent-auth --all"
   assert_contains "dry-run includes manual harden checkpoint" "$output" "Manual checkpoint"
@@ -414,6 +448,8 @@ test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
   assert_eq "remote config preserves spaced public key" "$expected_public_key" "$loaded_public_key"
   assert_eq "remote config preserves empty hostname" "" "$loaded_hostname"
   assert_contains "remote config sets phase" "$prelude" "phase=prepare"
+  assert_contains "remote config sets swap enabled" "$prelude" "swap_enabled=1"
+  assert_contains "remote config sets swap size" "$prelude" "swap_size=2G"
 }
 
 test_parse_args_sets_default_user() {
@@ -513,6 +549,7 @@ test_doctor_prints_read_only_audit() {
   assert_contains "doctor reports host key expectation" "$output" "first SSH host key"
   assert_contains "doctor prints provider firewall checklist" "$output" "== Provider firewall checklist =="
   assert_contains "doctor checks vps state" "$output" "== VPS state checks when run on the server =="
+  assert_contains "doctor reports swap plan" "$output" "swap: ensure active (2G if no existing swap)"
   assert_contains "doctor observes exposed ports" "$output" "== Exposed ports observation =="
   assert_contains "doctor reports success summary" "$output" "Doctor completed without blocking local input issues."
 }
@@ -520,6 +557,8 @@ test_doctor_prints_read_only_audit() {
 test_parse_args_sets_defaults_and_flags
 test_parse_args_supports_installing_agent_clis
 test_parse_args_supports_web_equals_false
+test_parse_args_supports_swap_options
+test_parse_args_rejects_invalid_swap_size
 test_parse_args_supports_skipping_agent_clis
 test_parse_args_rejects_removed_agent_auth_options
 test_identity_path_defaults_from_public_key

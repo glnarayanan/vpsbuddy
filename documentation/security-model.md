@@ -14,6 +14,7 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 - Codex CLI, Grok CLI, and GitHub CLI are installed only when `--install-agent-clis` is passed, and authentication is deferred to the post-setup `vps-agent-auth` helper. These installers are best-effort: an upstream CLI installer outage must not abort the security bootstrap.
 - Codex and Grok are updated every two days by `vps-agent-cli-update.timer` only when agent CLIs are installed.
 - OS packages are updated every two weeks by `vps-os-update.timer`; apt hosts also receive fourteen-day `unattended-upgrades` periodic configuration.
+- Swap is active by default. When no active swap exists, prepare creates a root-owned `0600` `/swapfile`, formats and enables it, and adds it to `/etc/fstab`. The default size is `2G` and can be changed with `--swap-size`; `--no-swap` skips it.
 
 ## Phased Rollback Protection
 

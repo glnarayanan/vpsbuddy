@@ -13,6 +13,7 @@ changes, compatibility changes, and smoke-test notes.
   comparison guide, and FAQ.
 - Read-only `vps-bootstrap doctor` audit mode.
 - Best-effort JSONL audit logging for root-owned `vps-agent-*` helper calls.
+- Idempotent swap setup with a configurable default `2G` `/swapfile`.
 
 ### Changed
 
@@ -49,6 +50,8 @@ Expected scope:
   `--install-agent-clis`.
 - OS update timer by default; agent CLI update timer only when agent CLIs are
   installed.
+- Swap setup by default when no active swap exists, with `--swap-size` and
+  `--no-swap` controls.
 - Read-only doctor audit.
 - Helper audit events under `/var/log/vps-agent-actions.log`.
 - Local shell lint and generated-script test coverage.

@@ -12,6 +12,8 @@ reset_config() {
   VPS_ENABLE_TAILSCALE_SSH="0"
   VPS_INSTALL_AGENT_CLIS="0"
   VPS_FULL_SUDO="0"
+  VPS_SWAP_ENABLED="1"
+  VPS_SWAP_SIZE="2G"
   VPS_WEB="1"
   VPS_DRY_RUN="0"
   VPS_DOCTOR="0"
@@ -42,6 +44,8 @@ Options:
   --install-agent-clis          Install Codex, Grok, and GitHub CLIs. Opt-in.
   --skip-agent-clis             Skip Codex, Grok, and GitHub CLI installation. Default.
   --full-sudo                   Use NOPASSWD:ALL instead of scoped passwordless sudo.
+  --swap-size <size>            Create this swap size when no active swap exists. Default: 2G.
+  --no-swap                     Do not create or enable swap during prepare.
   --web                         Keep public TCP 80/443 open. Default.
   --web=false                   Disable public TCP 80/443.
   --no-web                      Disable public TCP 80/443.
@@ -104,6 +108,15 @@ validate_hostname() {
 
   if [[ ! "$hostname" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,251}[A-Za-z0-9]$ ]]; then
     error "hostname must contain only letters, numbers, dots, and hyphens"
+    return 1
+  fi
+}
+
+validate_swap_size() {
+  local size="$1"
+
+  if [[ ! "$size" =~ ^[1-9][0-9]*[MmGg]$ ]]; then
+    error "swap size must be a positive whole number followed by M or G, for example 2G"
     return 1
   fi
 }
@@ -201,6 +214,19 @@ parse_args() {
         VPS_FULL_SUDO="1"
         shift
         ;;
+      --swap-size)
+        require_option_value "$1" "${2-}" || return 1
+        VPS_SWAP_SIZE="$2"
+        shift 2
+        ;;
+      --swap-size=*)
+        VPS_SWAP_SIZE="${1#*=}"
+        shift
+        ;;
+      --no-swap)
+        VPS_SWAP_ENABLED="0"
+        shift
+        ;;
       --web)
         VPS_WEB="1"
         shift
@@ -256,6 +282,7 @@ parse_args() {
   fi
   validate_admin_user "$VPS_ADMIN_USER" || return 1
   validate_hostname "$VPS_HOSTNAME" || return 1
+  validate_swap_size "$VPS_SWAP_SIZE" || return 1
 
   if [[ -z "$VPS_IDENTITY" ]]; then
     VPS_IDENTITY="$(detect_identity_path "$VPS_PUBKEY")"
@@ -530,6 +557,8 @@ enable_tailscale_ssh="${enable_tailscale_ssh:-0}"
 web_enabled="${web_enabled:-1}"
 install_agent_clis="${install_agent_clis:-0}"
 full_sudo="${full_sudo:-0}"
+swap_enabled="${swap_enabled:-1}"
+swap_size="${swap_size:-2G}"
 
 OS_ID=""
 OS_LIKE=""
@@ -578,6 +607,23 @@ validate_hostname_remote() {
   if [[ ! "$requested_hostname" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,251}[A-Za-z0-9]$ ]]; then
     fail "hostname must contain only letters, numbers, dots, and hyphens"
   fi
+}
+
+validate_swap_size_remote() {
+  if [[ ! "$swap_size" =~ ^[1-9][0-9]*[MmGg]$ ]]; then
+    fail "swap size must be a positive whole number followed by M or G, for example 2G"
+  fi
+}
+
+swap_size_mb() {
+  case "$swap_size" in
+    [1-9][0-9]*[Mm])
+      printf '%s\n' "${swap_size%?}"
+      ;;
+    [1-9][0-9]*[Gg])
+      printf '%s\n' "$(( ${swap_size%?} * 1024 ))"
+      ;;
+  esac
 }
 
 load_os_release() {
@@ -659,20 +705,93 @@ install_required_packages() {
   if [[ "$PKG_BACKEND" == "apt" ]]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y sudo ca-certificates curl gnupg git openssh-server ufw unattended-upgrades
+    apt-get install -y sudo ca-certificates curl gnupg git openssh-server ufw unattended-upgrades util-linux
     return 0
   fi
 
   if [[ "$PKG_BACKEND" == "dnf" ]]; then
     dnf makecache -y
-    dnf install -y sudo ca-certificates curl git openssh-server firewalld
+    dnf install -y sudo ca-certificates curl git openssh-server firewalld util-linux
     install_optional_package dnf-automatic || true
     return 0
   fi
 
   yum makecache -y
-  yum install -y sudo ca-certificates curl git openssh-server firewalld
+  yum install -y sudo ca-certificates curl git openssh-server firewalld util-linux
   install_optional_package dnf-automatic || true
+}
+
+has_active_swap() {
+  [[ -r /proc/swaps ]] || return 1
+  awk 'NR > 1 && $1 != "" { found = 1 } END { exit(found ? 0 : 1) }' /proc/swaps
+}
+
+ensure_swap_fstab() {
+  if ! grep -Eq '^[[:space:]]*/swapfile[[:space:]]+none[[:space:]]+swap([[:space:]]|$)' /etc/fstab; then
+    printf '/swapfile none swap sw 0 0\n' >>/etc/fstab
+  fi
+}
+
+install_swap() {
+  local swap_file="/swapfile" swap_size_mb_value
+
+  if [[ "$swap_enabled" != "1" ]]; then
+    log "swap setup skipped"
+    return 0
+  fi
+
+  validate_swap_size_remote
+  command_exists mkswap || fail "mkswap is required for swap setup"
+  command_exists swapon || fail "swapon is required for swap setup"
+  [[ -r /proc/swaps ]] || fail "/proc/swaps is unavailable; cannot verify swap state"
+
+  if has_active_swap; then
+    if awk '$1 == "/swapfile" { found = 1 } END { exit(found ? 0 : 1) }' /proc/swaps; then
+      ensure_swap_fstab
+    fi
+    log "active swap already exists; leaving it unchanged"
+    return 0
+  fi
+
+  if [[ -L "$swap_file" ]]; then
+    fail "$swap_file is a symlink; refusing to use it for swap"
+  fi
+
+  if [[ -e "$swap_file" ]]; then
+    chmod 600 "$swap_file"
+    if swapon "$swap_file" 2>/dev/null; then
+      ensure_swap_fstab
+      log "enabled existing swap file: $swap_file"
+      return 0
+    fi
+
+    fail "$swap_file exists but is not usable; refusing to overwrite it"
+  fi
+
+  install -o root -g root -m 0600 /dev/null "$swap_file"
+  if ! command_exists fallocate || ! fallocate -l "$swap_size" "$swap_file" 2>/dev/null; then
+    swap_size_mb_value="$(swap_size_mb)"
+    log "fallocate unavailable or failed; creating $swap_size swap with dd"
+    rm -f "$swap_file"
+    install -o root -g root -m 0600 /dev/null "$swap_file"
+    if ! dd if=/dev/zero of="$swap_file" bs=1048576 count="$swap_size_mb_value"; then
+      rm -f "$swap_file"
+      fail "could not allocate $swap_size swap file"
+    fi
+  fi
+
+  chmod 600 "$swap_file"
+  if ! mkswap "$swap_file" >/dev/null; then
+    rm -f "$swap_file"
+    fail "could not format $swap_file as swap"
+  fi
+  if ! swapon "$swap_file"; then
+    rm -f "$swap_file"
+    fail "could not activate $swap_file"
+  fi
+
+  ensure_swap_fstab
+  log "created and enabled $swap_size swap at $swap_file"
 }
 
 enable_service() {
@@ -1574,6 +1693,9 @@ validate_prepare_state() {
   [[ -s "$home_dir/.ssh/authorized_keys" ]] || fail "authorized_keys missing for $admin_user"
   [[ -n "$TAILSCALE_IP" ]] || fail "Tailnet IP missing"
   systemctl is-active "$SSHD_SERVICE" >/dev/null 2>&1 || fail "$SSHD_SERVICE is not active"
+  if [[ "$swap_enabled" == "1" ]] && ! has_active_swap; then
+    fail "swap is not active"
+  fi
 }
 
 run_prepare() {
@@ -1582,6 +1704,7 @@ run_prepare() {
   validate_hostname_remote
   select_platform
   install_required_packages
+  install_swap
   enable_service "$SSHD_SERVICE"
   configure_automatic_updates
   install_ban_service
@@ -1595,6 +1718,7 @@ run_prepare() {
 
   printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
   printf 'VPS_BOOTSTRAP_FIREWALL=%s\n' "$FIREWALL_BACKEND"
+  printf 'VPS_BOOTSTRAP_SWAP=%s\n' "$([[ "$swap_enabled" == "1" ]] && printf 'enabled' || printf 'disabled')"
   log "prepare phase complete; password/root SSH remains available until local Tailnet login verification passes"
 }
 
@@ -1679,6 +1803,8 @@ generate_remote_config_prelude() {
   printf 'web_enabled=%q\n' "$VPS_WEB"
   printf 'install_agent_clis=%q\n' "$VPS_INSTALL_AGENT_CLIS"
   printf 'full_sudo=%q\n' "$VPS_FULL_SUDO"
+  printf 'swap_enabled=%q\n' "$VPS_SWAP_ENABLED"
+  printf 'swap_size=%q\n' "$VPS_SWAP_SIZE"
 }
 
 parse_prepare_tailnet_ip() {
@@ -1861,6 +1987,7 @@ Configuration:
   Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')
   developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')
   sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')
+  swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'ensure active (%s if no existing swap)' "$VPS_SWAP_SIZE" || printf 'disabled')
   public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')
 
 Phase 1: prepare through $VPS_LOGIN_USER
@@ -1966,6 +2093,7 @@ doctor_local_plan() {
   doctor_info "Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')"
   doctor_info "developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')"
   doctor_info "sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')"
+  doctor_info "swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'ensure active (%s if no existing swap)' "$VPS_SWAP_SIZE" || printf 'disabled')"
   doctor_info "public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')"
 }
 
@@ -2002,6 +2130,18 @@ doctor_remote_vps_state() {
     fi
   else
     doctor_info "tailscale command not found; expected before bootstrap or on non-VPS workstations"
+  fi
+
+  if [[ "$VPS_SWAP_ENABLED" != "1" ]]; then
+    doctor_info "swap setup disabled by plan"
+  elif [[ -r /proc/swaps ]]; then
+    if awk 'NR > 1 && $1 != "" { found = 1 } END { exit(found ? 0 : 1) }' /proc/swaps; then
+      doctor_ok "active swap detected"
+    else
+      doctor_warn "no active swap detected"
+    fi
+  else
+    doctor_info "swap state unavailable; run doctor on the VPS to inspect it"
   fi
 
   for helper in \
@@ -2132,6 +2272,7 @@ Bootstrap complete.
 
 Admin user: $VPS_ADMIN_USER
 Tailnet SSH target: $VPS_ADMIN_USER@$tailnet_ip
+Swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'enabled (%s if created)' "$VPS_SWAP_SIZE" || printf 'disabled')
 Verify from this laptop:
   ssh -i $(shell_quote "$VPS_IDENTITY") $(shell_quote "$VPS_ADMIN_USER@$tailnet_ip")
 

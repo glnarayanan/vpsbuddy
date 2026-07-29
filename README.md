@@ -10,8 +10,8 @@ application stack.
 This is not a Dokploy, Coolify, PaaS, or hosting-panel clone. It does not
 schedule apps, issue certificates, manage containers, or provide a web UI. It
 prepares the server underneath those choices: SSH hardening, firewall posture,
-admin user setup, bounded sudo helpers, Tailscale access, update timers, and
-developer CLI installation.
+admin user setup, bounded sudo helpers, Tailscale access, swap space, update
+timers, and developer CLI installation.
 
 Current status: `v0.1.0-alpha`. The project is usable for review and local
 testing, but public releases should be treated as early and security-sensitive.
@@ -27,6 +27,8 @@ testing, but public releases should be treated as early and security-sensitive.
   SSH.
 - Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default
   for hosted web applications.
+- Creates and enables a 2G `/swapfile` when no active swap exists, or uses the
+  size passed with `--swap-size`.
 - Installs Codex CLI, Grok CLI, and GitHub CLI only when explicitly requested.
 - Adds an OS package update timer by default and agent CLI update timers only
   when agent CLIs are installed.
@@ -42,6 +44,8 @@ testing, but public releases should be treated as early and security-sensitive.
   comparison.
 - Outbound internet access from the VPS for package installation and Tailscale
   login.
+- Enough free disk space for the selected swap size when the VPS has no active
+  swap. The default size is 2G.
 - A Tailscale account and the ability to approve the interactive login URL.
 
 Do not run this against a long-lived or manually customized server unless you
@@ -71,6 +75,7 @@ bin/vps-bootstrap \
   --pubkey ~/.ssh/id_ed25519.pub \
   --identity ~/.ssh/id_ed25519 \
   --hostname app-01 \
+  --swap-size 4G \
   --enable-tailscale-ssh
 ```
 
@@ -88,6 +93,9 @@ bin/vps-bootstrap \
 
 Use `--no-web` or `--web=false` for private-only servers where public HTTP and
 HTTPS should remain closed.
+
+Swap setup runs by default during prepare. Use `--no-swap` when another system
+already manages memory or when the host should not create swap.
 
 To install optional developer CLIs, pass `--install-agent-clis`. These installs
 are best-effort so an upstream CLI installer outage does not stop SSH hardening:
@@ -147,6 +155,7 @@ For a real VPS smoke test, use a disposable fresh instance and verify:
 - Public TCP 80/443 match the selected `--web` setting.
 - `systemctl list-timers` shows the OS update timer, plus the agent CLI update
   timer when `--install-agent-clis` was used.
+- `swapon --show` reports active swap, unless `--no-swap` was used.
 - `bin/vps-bootstrap doctor` reports no blocking local input issues from the
   workstation.
 - `vps-agent-auth --status` reports the expected post-setup auth state when

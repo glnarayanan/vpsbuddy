@@ -49,6 +49,7 @@ The tests cover:
 - Agent CLI helper generation for native auth commands plus Grok `XAI_API_KEY` status handling.
 - Agent CLI update timer generation for two-day Codex installer reruns and `grok update`.
 - OS update timer generation for two-week unattended apt/dnf/yum package updates.
+- Swap setup generation, size validation, idempotent existing-swap handling, and `/etc/fstab` persistence.
 - Dry-run phase ordering that verifies Tailnet login before hardening.
 - Read-only `doctor` output for local inputs, provider firewall reminders, VPS state checks, and exposed port observations.
 - Streamed remote config generation so public keys with spaces and empty optional values survive SSH execution.

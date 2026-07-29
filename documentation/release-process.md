@@ -73,6 +73,7 @@ After the run:
 ```bash
 ssh deploy@<tailscale-ip>
 sudo -n /usr/local/sbin/vps-agent-sudo-check
+swapon --show
 systemctl list-timers | grep 'vps-os-update'
 test -r /var/log/vps-agent-actions.log && tail -n 5 /var/log/vps-agent-actions.log
 ```
@@ -105,6 +106,7 @@ Expected results:
 - TCP 80/443 are open only when web access is enabled.
 - Tailnet SSH works for the admin user.
 - The bounded sudo check succeeds.
+- Active swap is present, unless the run used `--no-swap`.
 - The OS update timer is installed.
 - `doctor` reports expected post-bootstrap state.
 - Helper audit events are written after helper use.

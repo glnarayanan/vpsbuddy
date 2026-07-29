@@ -51,6 +51,9 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
   because Tailnet ACL SSH rules are still required.
 - `--install-agent-clis`: best-effort install of Codex CLI, Grok CLI, GitHub
   CLI, `vps-agent-auth`, and the agent CLI update timer.
+- `--swap-size <size>`: create this swap size when no active swap exists.
+  Accepts a positive whole number followed by `M` or `G`. Defaults to `2G`.
+- `--no-swap`: skip swap setup.
 - `--no-web` or `--web=false`: close public TCP 80/443 for private-only hosts.
 - `--full-sudo`: use broad `NOPASSWD:ALL` instead of the default bounded helper
   policy.
@@ -73,6 +76,9 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
 - If you decline hardening, rerun the same command later. The prepare phase is
   safe to repeat and will re-check existing user, key, Tailscale, and sudo state
   before asking again.
+- Prepare creates `/swapfile` with mode `0600` when no active swap exists,
+  enables it, and adds it to `/etc/fstab`. A valid existing swap file is reused;
+  an unusable `/swapfile` is never overwritten.
 - Default passwordless sudo is limited to root-owned `vps-agent-*` helpers under
   `/usr/local/sbin`.
 - Helper calls append best-effort JSONL audit events to
