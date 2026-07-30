@@ -427,6 +427,41 @@ test_parse_prepare_output_extracts_tailnet_ip() {
   assert_eq "parse prepare tailnet ip" "100.64.0.25" "$ip"
 }
 
+test_bootstrap_continues_after_completed_prepare_session() {
+  local output
+  output="$(
+    bash -c '
+      source lib/vps-bootstrap.sh
+      reset_config
+      VPS_HOST="example.test"
+      VPS_LOGIN_USER="root"
+      VPS_ADMIN_USER="deploy"
+      VPS_PUBKEY="tests/fixtures/id_ed25519.pub"
+      VPS_IDENTITY="tests/fixtures/identity_fixture"
+
+      validate_local_files() { :; }
+      read_public_key() { printf "ssh-ed25519 AAAAexample"; }
+      prompt_host_public_key() { printf "ssh-ed25519 AAAAhost"; }
+      write_known_hosts_file() { :; }
+      run_remote_prepare() {
+        printf "VPS_BOOTSTRAP_TAILSCALE_IP=100.64.0.25\\n"
+        printf "[vps-bootstrap] prepare phase complete; public SSH remains available until local Tailnet login verification passes\\n"
+        return 7
+      }
+      verify_admin_login() { :; }
+      confirm_harden_after_manual_ssh_check() { return 0; }
+      confirm_tailscale_ssh_acl_ready() { :; }
+      run_remote_harden() { :; }
+
+      run_bootstrap
+    ' 2>&1
+  )"
+
+  assert_contains "prepare status warning is visible" "$output" "continuing with Tailnet verification"
+  assert_contains "bootstrap reaches verify phase after prepare session closes" "$output" "Phase 2: verify Tailnet key login"
+  assert_contains "bootstrap reaches harden phase after prepare session closes" "$output" "Phase 3: harden over Tailnet"
+}
+
 test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
   local expected_public_key prelude loaded_public_key loaded_hostname
   reset_config
@@ -616,6 +651,7 @@ test_host_public_key_validation_and_known_hosts
 test_dry_run_prints_rollback_safe_phase_ordering
 test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip
 test_parse_prepare_output_extracts_tailnet_ip
+test_bootstrap_continues_after_completed_prepare_session
 test_remote_config_prelude_preserves_public_key_and_empty_hostname
 test_parse_args_sets_default_user
 test_parse_args_requires_host

@@ -29,6 +29,8 @@ changes, compatibility changes, and smoke-test notes.
   admin verification reports that hardening was skipped.
 - A completed prepare response is now parsed before a non-zero SSH session
   status can stop the local verification and hardening phases.
+- The local handoff now requires the remote prepare-complete marker before it
+  can continue to Tailnet verification.
 
 ### Removed
 

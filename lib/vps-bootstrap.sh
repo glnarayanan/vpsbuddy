@@ -2316,7 +2316,16 @@ run_bootstrap() {
     prepare_pipeline_status=("${PIPESTATUS[@]}")
   fi
 
-  prepare_output="$(cat "$prepare_log")"
+  if ! prepare_output="$(cat "$prepare_log")"; then
+    error "could not read prepare output; public SSH remains available"
+    return 1
+  fi
+
+  if [[ "$prepare_output" != *"prepare phase complete;"* ]]; then
+    error "prepare did not report completion; public SSH remains available"
+    return 1
+  fi
+
   tailnet_ip="$(parse_prepare_tailnet_ip "$prepare_output")"
   if [[ "${prepare_pipeline_status[1]}" -ne 0 ]]; then
     error "could not save prepare output locally; public SSH was not disabled"
