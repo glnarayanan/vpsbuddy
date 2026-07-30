@@ -58,9 +58,8 @@ Inspect the plan first:
 bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --dry-run
 ```
 
-Run the top-level CLI from the machine that has the checkout and the required
-SSH keys. A laptop or workstation is preferred; an interactive server shell also
-works when the private key is already available there:
+Run the top-level CLI from your laptop or workstation. The VPS needs no checkout
+or private key; the CLI sends the generated remote script over SSH:
 
 ```bash
 bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01

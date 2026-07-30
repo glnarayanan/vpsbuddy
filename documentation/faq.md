@@ -16,12 +16,15 @@ For an existing server, inspect dry-run output and the generated behavior first.
 You are responsible for understanding how it interacts with existing users,
 SSH, firewall, sudo, and service configuration.
 
-## Can I run the top-level CLI from the VPS itself?
+## Does the VPS need a checkout?
 
-Yes. Run `bin/vps-bootstrap` from an interactive server shell when the full
-checkout and the required private key are already there. The CLI reads its
-confirmation prompts from the controlling terminal. Do not run only the
-generated remote prepare payload; it ends after the prepare phase by design.
+No. Run `bin/vps-bootstrap` from your workstation. The CLI sends the generated
+remote script over SSH, so the VPS needs no checkout or private key. Do not run
+only the generated remote prepare payload; it ends after the prepare phase by
+design.
+
+An interactive server shell can run the top-level CLI if you deliberately place
+the checkout and private key there, but that is optional.
 
 ## What if the provider disables password SSH at provisioning?
 

@@ -73,9 +73,11 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
   The harden phase runs only after Tailnet admin SSH and bounded sudo
   verification pass and you type `yes` after manually checking SSH from another
   terminal.
-- The top-level CLI can run from a workstation or an interactive server shell.
-  Run `bin/vps-bootstrap`; do not run only the generated remote prepare payload.
-  The private key must be available in the environment where the CLI runs.
+- The normal path is to run the top-level CLI from a workstation. The VPS needs
+  no checkout or private key; the CLI sends the generated remote script over
+  SSH. Do not run only the generated remote prepare payload.
+- An interactive server shell can run the top-level CLI only when you have
+  deliberately placed the checkout and private key there; this is optional.
 - For a provider that installs a key and disables password SSH at provisioning,
   pass `--login-identity ~/.ssh/provider_key`. This key is used for the initial
   SSH and SCP steps only; `--identity` remains the managed admin key.
