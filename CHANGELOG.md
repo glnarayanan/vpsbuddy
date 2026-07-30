@@ -27,6 +27,8 @@ changes, compatibility changes, and smoke-test notes.
   duplicate project overview.
 - Interactive prompts now use the controlling terminal, and failed Tailnet
   admin verification reports that hardening was skipped.
+- A completed prepare response is now parsed before a non-zero SSH session
+  status can stop the local verification and hardening phases.
 
 ### Removed
 

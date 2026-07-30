@@ -2293,6 +2293,7 @@ DOCTOR_HEADER
 
 run_bootstrap() {
   local host_public_key known_hosts_file public_key prepare_log prepare_output tailnet_ip
+  local -a prepare_pipeline_status
 
   validate_local_files || return 1
   public_key="$(read_public_key "$VPS_PUBKEY")" || return 1
@@ -2309,13 +2310,24 @@ run_bootstrap() {
   trap 'rm -f "$prepare_log" "$known_hosts_file"' RETURN
 
   printf '[vps-bootstrap] Phase 1: prepare through %s. OpenSSH and sudo follow your local and server auth settings.\n' "$VPS_LOGIN_USER"
-  run_remote_prepare "$public_key" "$known_hosts_file" 2>&1 | tee "$prepare_log"
+  if run_remote_prepare "$public_key" "$known_hosts_file" 2>&1 | tee "$prepare_log"; then
+    prepare_pipeline_status=("${PIPESTATUS[@]}")
+  else
+    prepare_pipeline_status=("${PIPESTATUS[@]}")
+  fi
 
   prepare_output="$(cat "$prepare_log")"
   tailnet_ip="$(parse_prepare_tailnet_ip "$prepare_output")"
+  if [[ "${prepare_pipeline_status[1]}" -ne 0 ]]; then
+    error "could not save prepare output locally; public SSH was not disabled"
+    return 1
+  fi
   if [[ -z "$tailnet_ip" ]]; then
     error "could not find Tailnet IP in prepare output; public SSH was not disabled"
     return 1
+  fi
+  if [[ "${prepare_pipeline_status[0]}" -ne 0 ]]; then
+    error "initial SSH session ended with status ${prepare_pipeline_status[0]} after prepare reported a Tailnet IP; continuing with Tailnet verification"
   fi
 
   printf '[vps-bootstrap] Phase 2: verify Tailnet key login for %s@%s.\n' "$VPS_ADMIN_USER" "$tailnet_ip"
