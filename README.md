@@ -1,8 +1,8 @@
-# VPS Bootstrap
+# vpsbuddy
 
-`vps-bootstrap` prepares a fresh VPS after you have logged into it. It creates
-an admin user, installs the chosen SSH key, joins Tailscale, sets up swap,
-hardens SSH, sets firewall rules, and can install developer CLIs.
+`vpsbuddy` prepares a fresh VPS after you have logged into it. It creates an
+admin user, installs the chosen SSH key, joins Tailscale, sets up swap, hardens
+SSH, sets firewall rules, and can install developer CLIs.
 
 It does not deploy apps, manage containers, issue certificates, or run a web
 control plane.
@@ -18,36 +18,22 @@ ssh -i ~/.ssh/provider_key root@203.0.113.10
 Run the guided installer on the VPS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/glnarayanan/server-setup-scripts/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh | bash
 ```
 
-No checkout, GitHub CLI setup, or SCP step is needed.
-
-To inspect the prompts and summary without changing the server:
+To inspect prompts and summary without changing the server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/glnarayanan/server-setup-scripts/main/install.sh |
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh |
   bash -s -- --dry-run
 ```
 
-The installer asks for every operator choice:
-
-- admin user name
-- SSH public key
-- optional hostname
-- swap size, or no swap
-- public web ports
-- Codex, Grok, and GitHub CLI installation
-- automatic OS updates
-- scoped or full passwordless sudo
-- optional Tailscale SSH
-
-There is no default admin name or swap size. If swap is already active, the
-script leaves it unchanged.
+The installer asks for every operator choice: admin user, SSH public key,
+optional hostname, swap, public web ports, Codex/Grok/GitHub CLI installation,
+automatic OS updates, scoped or full passwordless sudo, and optional Tailscale
+SSH. There is no default admin name or swap size. Active swap is left unchanged.
 
 ## Safe Hardening Flow
-
-The script runs two local phases on the VPS:
 
 1. Prepare the user, key, packages, Tailscale, swap, helpers, and firewall while
    public SSH stays open.
@@ -64,7 +50,8 @@ stays open.
 - OpenSSH is reachable through the Tailscale interface.
 - The host firewall denies other inbound traffic.
 - Public TCP 80/443 follow the choice made during setup.
-- The admin user gets scoped passwordless helpers unless full sudo was chosen.
+- The admin user gets passwordless access to root-owned `vpsbuddy-*` helpers
+  unless full sudo was chosen.
 - `/swapfile` is created only when requested and no swap is active.
 - OS and developer CLI timers are installed only when selected.
 
@@ -72,28 +59,32 @@ When developer CLIs are installed, authenticate after setup:
 
 ```bash
 ssh <admin>@<tailscale-ip>
-vps-agent-auth --all
-vps-agent-auth --status
+vpsbuddy-auth --all
+vpsbuddy-auth --status
 ```
 
-The bootstrap does not ask for or store CLI tokens.
+`vpsbuddy` does not ask for or store CLI tokens.
+
+Mirror the final host firewall policy in the VPS provider firewall: no public
+TCP 22, and public TCP 80/443 only when chosen. See
+[documentation/provider-firewall-checklist.md](documentation/provider-firewall-checklist.md).
 
 ## Supported Hosts
 
-The current target is a fresh systemd VPS running:
+Fresh systemd VPS images:
 
 - Ubuntu or Debian with apt
 - Fedora with dnf
 - AlmaLinux, Rocky Linux, or another supported RHEL-family image with dnf or yum
 
-See [documentation/compatibility-matrix.md](documentation/compatibility-matrix.md)
-for details.
+Ubuntu LTS is the primary smoke-tested target. See
+[documentation/compatibility-matrix.md](documentation/compatibility-matrix.md).
 
 ## Local Development
 
 ```bash
 make check
-bin/vps-bootstrap --dry-run
+bin/vpsbuddy --dry-run
 ```
 
 Use a disposable VPS for a real smoke test. Do not run this alpha against a
@@ -104,14 +95,12 @@ users, and services.
 
 - [Operator guide](documentation/README.md)
 - [Security model](documentation/security-model.md)
-- [Threat model](documentation/threat-model.md)
 - [Compatibility matrix](documentation/compatibility-matrix.md)
 - [Provider firewall checklist](documentation/provider-firewall-checklist.md)
 - [Release process](documentation/release-process.md)
-- [FAQ](documentation/faq.md)
 - [Testing](documentation/testing.md)
+- [Upstream references](documentation/references.md)
 
-Security issues should follow [SECURITY.md](SECURITY.md). Contributions should
-follow [CONTRIBUTING.md](CONTRIBUTING.md).
+Security issues: [SECURITY.md](SECURITY.md). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Apache License 2.0. See [LICENSE](LICENSE).

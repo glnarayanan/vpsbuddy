@@ -1,26 +1,21 @@
 # Upstream References
 
-These are the upstream references used for install and auth behavior.
-
 ## Codex CLI
 
-- OpenAI Codex CLI setup: https://developers.openai.com/codex/cli
-- OpenAI API key safety: https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety
-
-When developer CLI installation is selected, Codex is installed with `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh` as the admin user. The same command is rerun by `vps-agent-cli-update.timer` every two days. Post-setup auth uses `codex login` through `vps-agent-auth`. If the selected install fails, prepare stops while public SSH stays open.
+- https://developers.openai.com/codex/cli
+- Install: `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh`
+- Auth: `codex login` via `vpsbuddy-auth`
 
 ## Grok CLI
 
-- Grok Build CLI: https://x.ai/cli
-- Grok Build docs: https://docs.x.ai/build/overview
-- xAI API docs: https://docs.x.ai/
-
-When developer CLI installation is selected, Grok CLI is installed with xAI's official `curl -fsSL https://x.ai/cli/install.sh | bash` installer, run as the admin user so its files live under that user's `~/.grok` directory. `vps-agent-cli-update.timer` runs `grok update` every two days. Post-setup auth uses `grok login`; non-browser environments can set `XAI_API_KEY`. `vps-agent-auth` does not accept or store API keys. If the selected install fails, prepare stops while public SSH stays open.
+- https://x.ai/cli
+- https://docs.x.ai/build/overview
+- Install: `curl -fsSL https://x.ai/cli/install.sh | bash`
+- Auth: `grok login`, or `XAI_API_KEY` in non-browser environments
 
 ## GitHub CLI
 
-- GitHub CLI Linux install docs: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
-- `gh auth login`: https://cli.github.com/manual/gh_auth_login
-- `gh` environment variables: https://cli.github.com/manual/gh_help_environment
-
-When developer CLI installation is selected, GitHub CLI is installed from GitHub's signed apt or rpm repositories. Homebrew is an available upstream install method, but this bootstrap uses the official Linux package repositories because fresh VPS images do not normally ship Homebrew. Post-setup auth uses `gh auth login --hostname github.com --git-protocol ssh` through `vps-agent-auth`. If the selected install fails, prepare stops while public SSH stays open.
+- https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+- https://cli.github.com/manual/gh_auth_login
+- Install: official apt/rpm repositories
+- Auth: `gh auth login --hostname github.com --git-protocol ssh`

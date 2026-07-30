@@ -4,8 +4,8 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# shellcheck source=lib/vps-bootstrap.sh
-source "$ROOT_DIR/lib/vps-bootstrap.sh"
+# shellcheck source=lib/vpsbuddy.sh
+source "$ROOT_DIR/lib/vpsbuddy.sh"
 
 failures=0
 
@@ -91,7 +91,7 @@ test_guided_dry_run_captures_operator_configuration() {
   output="$(
     bash -c '
       set -Eeuo pipefail
-      source lib/vps-bootstrap.sh
+      source lib/vpsbuddy.sh
       exec 3<<<$'"'"'deploy\nyes\n\n4G\nyes\nyes\nyes\nno\nno\n'"'"'
       VPS_INPUT_FD=3
       detect_existing_public_key() {
@@ -123,7 +123,7 @@ test_fallback_key_and_no_swap_are_captured() {
   output="$(
     TEST_PUBLIC_KEY="$public_key" bash -c '
       set -Eeuo pipefail
-      source lib/vps-bootstrap.sh
+      source lib/vpsbuddy.sh
       exec 3<<<"deploy
 ${TEST_PUBLIC_KEY}
 
@@ -157,7 +157,7 @@ test_root_and_restricted_detected_keys_are_rejected() {
     pass "root admin user is rejected"
   fi
 
-  key_home="$(mktemp -d "${TMPDIR:-/tmp}/vps-bootstrap-key-home.XXXXXX")"
+  key_home="$(mktemp -d "${TMPDIR:-/tmp}/vpsbuddy-key-home.XXXXXX")"
   mkdir -p "$key_home/.ssh"
   printf 'restrict %s\n' "$(cat tests/fixtures/id_ed25519.pub)" > "$key_home/.ssh/authorized_keys"
   detected="$(
@@ -178,7 +178,7 @@ run_stubbed_bootstrap() {
 
   TEST_CONFIRMATION="$confirmation" TEST_PUBLIC_KEY="$public_key" bash -c '
     set -Eeuo pipefail
-    source lib/vps-bootstrap.sh
+    source lib/vpsbuddy.sh
     exec 3<<<"deploy
 yes
 
@@ -231,9 +231,9 @@ test_tailnet_confirmation_controls_hardening() {
 
 test_legacy_ssh_orchestration_is_removed() {
   local source
-  source="$(cat lib/vps-bootstrap.sh)"
+  source="$(cat lib/vpsbuddy.sh)"
 
-  assert_not_contains "host option removed" "$source" "vps-bootstrap --host"
+  assert_not_contains "host option removed" "$source" "vpsbuddy --host"
   assert_not_contains "login identity option removed" "$source" "--login-identity"
   assert_not_contains "remote prepare removed" "$source" "run_remote_prepare"
   assert_not_contains "remote harden removed" "$source" "run_remote_harden"
@@ -254,10 +254,10 @@ test_checkout_free_installer_downloads_and_runs_bundle() {
   assert_contains "installer bounds connect time" "$installer" "--connect-timeout 15"
   assert_contains "installer bounds total time" "$installer" "--max-time 120"
   assert_contains "installer extracts one archive" "$installer" "tar -xzf"
-  assert_contains "installer downloads bootstrap entrypoint" "$installer" "bin/vps-bootstrap"
-  assert_contains "installer downloads bootstrap library" "$installer" "lib/vps-bootstrap.sh"
-  assert_contains "installer downloads helper templates" "$installer" "lib/templates/vps-agent-auth.sh"
-  assert_contains "installer runs downloaded entrypoint" "$installer" "\"\$install_dir/bin/vps-bootstrap\" \"\$@\""
+  assert_contains "installer downloads bootstrap entrypoint" "$installer" "bin/vpsbuddy"
+  assert_contains "installer downloads bootstrap library" "$installer" "lib/vpsbuddy.sh"
+  assert_contains "installer downloads helper templates" "$installer" "lib/templates/vpsbuddy-auth.sh"
+  assert_contains "installer runs downloaded entrypoint" "$installer" "\"\$install_dir/bin/vpsbuddy\" \"\$@\""
 }
 
 test_checkout_free_installer_executes_downloaded_bundle() {
@@ -280,12 +280,12 @@ test_checkout_free_installer_executes_downloaded_bundle() {
           fi
         done
 
-        bundle_dir="$(mktemp -d "${TMPDIR:-/tmp}/vps-bootstrap-bundle.XXXXXX")"
+        bundle_dir="$(mktemp -d "${TMPDIR:-/tmp}/vpsbuddy-bundle.XXXXXX")"
         mkdir -p "$bundle_dir/repository/bin" "$bundle_dir/repository/lib/templates"
-        cp "$TEST_REPO_ROOT/bin/vps-bootstrap" "$bundle_dir/repository/bin/vps-bootstrap"
-        cp "$TEST_REPO_ROOT/lib/vps-bootstrap.sh" "$bundle_dir/repository/lib/vps-bootstrap.sh"
-        cp "$TEST_REPO_ROOT/lib/templates/vps-agent-audit-prelude.sh" "$bundle_dir/repository/lib/templates/vps-agent-audit-prelude.sh"
-        cp "$TEST_REPO_ROOT/lib/templates/vps-agent-auth.sh" "$bundle_dir/repository/lib/templates/vps-agent-auth.sh"
+        cp "$TEST_REPO_ROOT/bin/vpsbuddy" "$bundle_dir/repository/bin/vpsbuddy"
+        cp "$TEST_REPO_ROOT/lib/vpsbuddy.sh" "$bundle_dir/repository/lib/vpsbuddy.sh"
+        cp "$TEST_REPO_ROOT/lib/templates/vpsbuddy-audit-prelude.sh" "$bundle_dir/repository/lib/templates/vpsbuddy-audit-prelude.sh"
+        cp "$TEST_REPO_ROOT/lib/templates/vpsbuddy-auth.sh" "$bundle_dir/repository/lib/templates/vpsbuddy-auth.sh"
         tar -czf "$archive_path" -C "$bundle_dir" repository
         rm -rf "$bundle_dir"
       }
@@ -301,7 +301,7 @@ no
 no
 no"
       export VPS_INPUT_FD=3
-      export SUDO_USER=vps-bootstrap-test-missing
+      export SUDO_USER=vpsbuddy-test-missing
       bash install.sh --dry-run
     ' 2>&1
   )"
@@ -335,18 +335,23 @@ test_generated_server_phase_keeps_security_controls() {
   assert_contains "swap rejects symlinks" "$server_script" 'is a symlink; refusing to use it for swap'
   assert_contains "prepare keeps public SSH rule" "$server_script" 'configure_firewall prepare'
   assert_contains "hardening writes SSH policy" "$server_script" 'write_sshd_hardening'
-  assert_contains "hardening uses the first SSH drop-in" "$server_script" '00-vps-bootstrap-hardening.conf'
+  assert_contains "hardening uses the first SSH drop-in" "$server_script" '00-vpsbuddy-hardening.conf'
   assert_contains "hardening checks effective SSH settings" "$server_script" 'validate_effective_sshd_hardening'
   assert_contains "hardening writes sudo policy" "$server_script" "write_sudoers_policy \"\$full_sudo\""
   assert_contains "developer CLI setup remains" "$server_script" 'install_agent_clis_if_requested'
   assert_contains "selected developer CLI failure stops prepare" "$server_script" 'one or more selected developer CLIs failed to install'
-  assert_contains "automatic updates follow operator choice" "$server_script" 'vps-bootstrap automatic OS updates disabled'
-  assert_contains "automatic update opt-out removes timer" "$server_script" '/etc/systemd/system/vps-os-update.timer'
-  assert_contains "legacy automatic update config is handled" "$server_script" '/etc/apt/apt.conf.d/20auto-upgrades'
+  assert_contains "automatic updates follow operator choice" "$server_script" 'vpsbuddy automatic OS updates disabled'
+  assert_contains "automatic update opt-out removes timer" "$server_script" '/etc/systemd/system/vpsbuddy-os-update.timer'
+  assert_contains "CLI update timer installs only after successful installs" "$server_script" 'install_agent_cli_update_timer'
+  assert_order \
+    "CLI auth helper installs after failure check" \
+    "$server_script" \
+    'one or more selected developer CLIs failed to install' \
+    'install_agent_auth_helper'
   assert_contains "root admin is rejected on the server" "$server_script" 'root cannot be the managed admin user'
   assert_contains "UID 0 aliases are rejected" "$server_script" 'managed admin user must not have UID 0'
   assert_contains "prepare disables existing Tailscale SSH" "$server_script" 'tailscale set --ssh=false'
-  assert_not_contains "unsafe deploy helper is removed" "$server_script" 'Usage: vps-agent-deploy'
+  assert_not_contains "generic agent symlink is not created" "$server_script" '/usr/local/bin/agent'
   assert_order \
     "SSH policy is validated before public SSH closes" \
     "$server_script" \

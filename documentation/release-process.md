@@ -1,60 +1,34 @@
 # Release Process
 
-This is an alpha security tool. A release needs both local checks and a
-disposable VPS run.
-
 ## Local Checks
 
 ```bash
 make check
-bin/vps-bootstrap --dry-run
+bin/vpsbuddy --dry-run
 ```
 
-Confirm that dry-run asks for and prints:
-
-- admin user and SSH key fingerprint
-- hostname choice
-- swap choice and size
-- public web ports
-- developer CLIs
-- automatic OS updates
-- sudo policy
-- Tailscale SSH
-
-Review:
-
-- [../README.md](../README.md)
-- [security-model.md](security-model.md)
-- [threat-model.md](threat-model.md)
-- [compatibility-matrix.md](compatibility-matrix.md)
-- [provider-firewall-checklist.md](provider-firewall-checklist.md)
-- [../CHANGELOG.md](../CHANGELOG.md)
+Review README, security-model, compatibility-matrix, provider-firewall-checklist,
+and CHANGELOG.
 
 ## Disposable VPS Smoke Test
 
 Provision a new VPS with an SSH key and keep the provider console open.
 
-Log in, then run:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/glnarayanan/server-setup-scripts/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh | bash
 ```
 
-During the run:
+During the run: confirm the key fingerprint or paste a test key, choose an
+explicit swap size, complete Tailscale login, keep the first public SSH session
+open, test the printed admin Tailnet login from another terminal, and type
+`yes` only after that login works.
 
-- confirm the detected public-key fingerprint or paste a test key
-- choose an explicit swap size
-- complete the Tailscale login
-- keep the first public SSH session open
-- test the printed admin Tailnet login from another terminal
-- type `yes` in the first terminal only after that login works
-
-After hardening, run as the admin user:
+After hardening, as the admin user:
 
 ```bash
-sudo -n /usr/local/sbin/vps-agent-sudo-check
+sudo -n /usr/local/sbin/vpsbuddy-sudo-check
 swapon --show
-systemctl list-timers | grep -E 'vps-(os|agent-cli)-update'
+systemctl list-timers | grep -E 'vpsbuddy-(os|cli)-update'
 sudo sshd -T | grep -E 'passwordauthentication|kbdinteractiveauthentication|permitrootlogin'
 sudo ufw status verbose 2>/dev/null || sudo firewall-cmd --list-all
 ```
@@ -67,23 +41,14 @@ nc -vz <public-ip> 80
 nc -vz <public-ip> 443
 ```
 
-Expected:
+Expect: public TCP 22 closed; Tailnet SSH works; password and root SSH disabled;
+TCP 80/443 match the setup choice; swap and selected timers/CLIs match; helper
+use appends to `/var/log/vpsbuddy-actions.log`.
 
-- public TCP 22 is closed
-- Tailnet SSH works for the admin user
-- password login and root SSH login are disabled
-- TCP 80/443 match the choice made during setup
-- swap matches the chosen state
-- selected timers exist
-- selected developer CLIs exist and `vps-agent-auth --status` runs
-- helper use appends to `/var/log/vps-agent-actions.log`
-
-Test at least Ubuntu before an alpha tag. Record the provider image and any
-differences in the release notes.
+Test at least Ubuntu before an alpha tag. Record the provider image in the
+release notes.
 
 ## Tag
-
-After review and smoke tests:
 
 ```bash
 git tag -a v0.1.0-alpha -m "v0.1.0-alpha"

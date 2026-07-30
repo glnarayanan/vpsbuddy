@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security-sensitive report
-    url: https://github.com/glnarayanan/server-setup-scripts/security/advisories/new
+    url: https://github.com/glnarayanan/vpsbuddy/security/advisories/new
     about: Privately report a vulnerability or exposed secret.

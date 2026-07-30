@@ -2,10 +2,10 @@
 
 lint:
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck -x install.sh bin/vps-bootstrap lib/vps-bootstrap.sh lib/templates/vps-agent-audit-prelude.sh lib/templates/vps-agent-auth.sh tests/run.sh; \
+		shellcheck -x install.sh bin/vpsbuddy lib/vpsbuddy.sh lib/templates/vpsbuddy-audit-prelude.sh lib/templates/vpsbuddy-auth.sh tests/run.sh; \
 	else \
 		echo "shellcheck not found; running bash -n fallback"; \
-		bash -n install.sh bin/vps-bootstrap lib/vps-bootstrap.sh lib/templates/vps-agent-audit-prelude.sh lib/templates/vps-agent-auth.sh tests/run.sh; \
+		bash -n install.sh bin/vpsbuddy lib/vpsbuddy.sh lib/templates/vpsbuddy-audit-prelude.sh lib/templates/vpsbuddy-auth.sh tests/run.sh; \
 	fi
 
 test:

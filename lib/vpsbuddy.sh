@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-VPS_BOOTSTRAP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VPSBUDDY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 reset_config() {
   VPS_ADMIN_USER=""
@@ -21,13 +21,13 @@ reset_config() {
 reset_config
 
 error() {
-  printf 'vps-bootstrap: %s\n' "$*" >&2
+  printf 'vpsbuddy: %s\n' "$*" >&2
 }
 
 usage() {
   cat << 'USAGE'
 Usage:
-  sudo vps-bootstrap [--dry-run]
+  sudo vpsbuddy [--dry-run]
 
 Run this command after logging into the VPS. The guided setup asks for:
   - the admin user name
@@ -91,7 +91,7 @@ prompt_required() {
   local answer
 
   while true; do
-    printf '[vps-bootstrap] %s: ' "$prompt" >&2
+    printf '[vpsbuddy] %s: ' "$prompt" >&2
     answer="$(read_interactive_answer)" || return 1
     if [[ -n "$answer" ]]; then
       printf '%s' "$answer"
@@ -105,7 +105,7 @@ prompt_optional() {
   local prompt="$1"
   local answer
 
-  printf '[vps-bootstrap] %s: ' "$prompt" >&2
+  printf '[vpsbuddy] %s: ' "$prompt" >&2
   answer="$(read_interactive_answer)" || return 1
   printf '%s' "$answer"
 }
@@ -115,7 +115,7 @@ prompt_yes_no() {
   local answer
 
   while true; do
-    printf '[vps-bootstrap] %s (yes/no): ' "$prompt" >&2
+    printf '[vpsbuddy] %s (yes/no): ' "$prompt" >&2
     answer="$(read_interactive_answer)" || return 1
     case "$answer" in
       yes | YES | Yes | y | Y)
@@ -182,7 +182,7 @@ validate_public_key() {
     return 0
   fi
 
-  key_file="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-key.XXXXXX")" || return 1
+  key_file="$(mktemp "${TMPDIR:-/tmp}/vpsbuddy-key.XXXXXX")" || return 1
   chmod 600 "$key_file"
   printf '%s\n' "$public_key" > "$key_file"
   if ssh-keygen -l -f "$key_file" > /dev/null 2>&1; then
@@ -204,7 +204,7 @@ public_key_fingerprint() {
     return 0
   fi
 
-  key_file="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-key.XXXXXX")" || return 1
+  key_file="$(mktemp "${TMPDIR:-/tmp}/vpsbuddy-key.XXXXXX")" || return 1
   chmod 600 "$key_file"
   printf '%s\n' "$public_key" > "$key_file"
   fingerprint="$(ssh-keygen -l -f "$key_file" 2> /dev/null | awk '{ print $2 }')"
@@ -244,7 +244,7 @@ collect_public_key() {
 
   detected_key="$(detect_existing_public_key || true)"
   if [[ -n "$detected_key" ]] && validate_public_key "$detected_key"; then
-    printf '[vps-bootstrap] Found the SSH key used by the current login: %s\n' \
+    printf '[vpsbuddy] Found the SSH key used by the current login: %s\n' \
       "$(public_key_fingerprint "$detected_key")" >&2
     use_detected_key="$(prompt_yes_no "Install this key for the new admin user")" || return 1
     if [[ "$use_detected_key" == "1" ]]; then
@@ -269,7 +269,7 @@ collect_swap_configuration() {
     VPS_SWAP_ENABLED="0"
     VPS_SWAP_SIZE=""
     VPS_SWAP_ACTION="keep existing"
-    printf '[vps-bootstrap] Active swap exists and will be left unchanged.\n' >&2
+    printf '[vpsbuddy] Active swap exists and will be left unchanged.\n' >&2
     return 0
   fi
 
@@ -310,7 +310,7 @@ collect_configuration() {
   collect_swap_configuration || return 1
   VPS_WEB="$(prompt_yes_no "Open public web ports 80 and 443")" || return 1
   VPS_INSTALL_AGENT_CLIS="$(prompt_yes_no "Install Codex, Grok, and GitHub CLIs")" || return 1
-  VPS_AUTOMATIC_UPDATES="$(prompt_yes_no "Manage automatic OS updates with vps-bootstrap")" || return 1
+  VPS_AUTOMATIC_UPDATES="$(prompt_yes_no "Manage automatic OS updates with vpsbuddy")" || return 1
   VPS_FULL_SUDO="$(prompt_yes_no "Grant the admin user full passwordless sudo")" || return 1
   VPS_ENABLE_TAILSCALE_SSH="$(
     prompt_yes_no "Enable Tailscale SSH (only if Tailnet SSH ACL rules are ready)"
@@ -335,7 +335,7 @@ SUMMARY
 
 require_vps_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
-    error "run this command as root, for example: sudo vps-bootstrap"
+    error "run this command as root, for example: sudo vpsbuddy"
     return 1
   fi
 
@@ -373,15 +373,15 @@ SUDO_GROUP=""
 TAILSCALE_IP=""
 
 log() {
-  printf '[vps-bootstrap] %s\n' "$*"
+  printf '[vpsbuddy] %s\n' "$*"
 }
 
 warn() {
-  printf '[vps-bootstrap] warning: %s\n' "$*" >&2
+  printf '[vpsbuddy] warning: %s\n' "$*" >&2
 }
 
 fail() {
-  printf '[vps-bootstrap] error: %s\n' "$*" >&2
+  printf '[vpsbuddy] error: %s\n' "$*" >&2
   exit 1
 }
 
@@ -391,7 +391,7 @@ command_exists() {
 
 require_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
-    fail "vps-bootstrap must run as root"
+    fail "vpsbuddy must run as root"
   fi
 }
 
@@ -629,39 +629,21 @@ enable_service() {
   return 1
 }
 
-remove_legacy_auto_updates_config() {
-  local legacy_file legacy_contents expected_contents
-
-  legacy_file="/etc/apt/apt.conf.d/20auto-upgrades"
-  [[ -f "$legacy_file" ]] || return 0
-
-  legacy_contents="$(cat "$legacy_file")"
-  expected_contents=$'APT::Periodic::Update-Package-Lists "14";\nAPT::Periodic::Unattended-Upgrade "14";\nAPT::Periodic::AutocleanInterval "14";'
-  if [[ "$legacy_contents" == "$expected_contents" ]]; then
-    rm -f "$legacy_file"
-    log "removed the legacy vps-bootstrap apt update schedule"
-  fi
-}
-
 configure_automatic_updates() {
-  if [[ "$PKG_BACKEND" == "apt" ]]; then
-    remove_legacy_auto_updates_config
-  fi
-
   if [[ "$automatic_updates" != "1" ]]; then
-    systemctl disable --now vps-os-update.timer >/dev/null 2>&1 || true
+    systemctl disable --now vpsbuddy-os-update.timer >/dev/null 2>&1 || true
     rm -f \
-      /etc/systemd/system/vps-os-update.service \
-      /etc/systemd/system/vps-os-update.timer \
-      /etc/apt/apt.conf.d/52vps-bootstrap-auto-upgrades \
-      /usr/local/sbin/vps-os-update
+      /etc/systemd/system/vpsbuddy-os-update.service \
+      /etc/systemd/system/vpsbuddy-os-update.timer \
+      /etc/apt/apt.conf.d/52vpsbuddy-auto-upgrades \
+      /usr/local/sbin/vpsbuddy-os-update
     systemctl daemon-reload
-    log "vps-bootstrap automatic OS updates disabled"
+    log "vpsbuddy automatic OS updates disabled"
     return 0
   fi
 
   if [[ "$PKG_BACKEND" == "apt" ]]; then
-    cat >/etc/apt/apt.conf.d/52vps-bootstrap-auto-upgrades <<'APT_AUTO_UPGRADES'
+    cat >/etc/apt/apt.conf.d/52vpsbuddy-auto-upgrades <<'APT_AUTO_UPGRADES'
 APT::Periodic::Update-Package-Lists "14";
 APT::Periodic::Unattended-Upgrade "14";
 APT::Periodic::AutocleanInterval "14";
@@ -708,24 +690,24 @@ case "$pkg_backend" in
     ;;
 esac
 OS_UPDATE_SCRIPT_BODY
-  } >/usr/local/sbin/vps-os-update
+  } >/usr/local/sbin/vpsbuddy-os-update
 
-  chmod 755 /usr/local/sbin/vps-os-update
+  chmod 755 /usr/local/sbin/vpsbuddy-os-update
 
-  cat >/etc/systemd/system/vps-os-update.service <<'OS_UPDATE_SERVICE'
+  cat >/etc/systemd/system/vpsbuddy-os-update.service <<'OS_UPDATE_SERVICE'
 [Unit]
-Description=Install OS updates managed by vps-bootstrap
+Description=Install OS updates managed by vpsbuddy
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/vps-os-update
+ExecStart=/usr/local/sbin/vpsbuddy-os-update
 OS_UPDATE_SERVICE
 
-  cat >/etc/systemd/system/vps-os-update.timer <<'OS_UPDATE_TIMER'
+  cat >/etc/systemd/system/vpsbuddy-os-update.timer <<'OS_UPDATE_TIMER'
 [Unit]
-Description=Run vps-bootstrap OS updates every two weeks
+Description=Run vpsbuddy OS updates every two weeks
 
 [Timer]
 OnBootSec=45min
@@ -738,10 +720,10 @@ WantedBy=timers.target
 OS_UPDATE_TIMER
 
   systemctl daemon-reload
-  systemctl enable --now vps-os-update.timer
+  systemctl enable --now vpsbuddy-os-update.timer
 }
 
-install_ban_service() {
+install_intrusion_prevention() {
   if install_optional_package fail2ban; then
     enable_service fail2ban || true
     return 0
@@ -758,7 +740,7 @@ install_ban_service() {
 agent_audit_prelude() {
   cat <<'AGENT_AUDIT_PRELUDE'
 SERVER_SCRIPT_HEAD
-  cat "$VPS_BOOTSTRAP_LIB_DIR/templates/vps-agent-audit-prelude.sh"
+  cat "$VPSBUDDY_LIB_DIR/templates/vpsbuddy-audit-prelude.sh"
   cat << 'SERVER_SCRIPT_BODY'
 AGENT_AUDIT_PRELUDE
 }
@@ -772,25 +754,22 @@ generate_sudoers_policy_server() {
   fi
 
   cat <<SUDOERS_POLICY
-# Managed by vps-bootstrap. Passwordless sudo is limited to root-owned helpers.
-Cmnd_Alias VPS_AGENT_HELPERS = /usr/local/sbin/vps-agent-sudo-check, /usr/local/sbin/vps-agent-package, /usr/local/sbin/vps-agent-service, /usr/local/sbin/vps-agent-logs, /usr/local/sbin/vps-agent-firewall, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
-$admin_user ALL=(root) NOPASSWD: VPS_AGENT_HELPERS
+# Managed by vpsbuddy. Passwordless sudo is limited to root-owned helpers.
+Cmnd_Alias VPSBUDDY_HELPERS = /usr/local/sbin/vpsbuddy-sudo-check, /usr/local/sbin/vpsbuddy-package, /usr/local/sbin/vpsbuddy-service, /usr/local/sbin/vpsbuddy-logs, /usr/local/sbin/vpsbuddy-firewall, /usr/local/sbin/vpsbuddy-cli-update, /usr/local/sbin/vpsbuddy-os-update
+$admin_user ALL=(root) NOPASSWD: VPSBUDDY_HELPERS
 SUDOERS_POLICY
 }
 
 install_agent_sudo_helpers() {
-  local home_dir
-
-  home_dir="$(admin_home_dir)"
   install -d -m 0755 /usr/local/sbin
 
-  cat >/usr/local/sbin/vps-agent-sudo-check <<'SUDO_CHECK_HELPER_HEAD'
+  cat >/usr/local/sbin/vpsbuddy-sudo-check <<'SUDO_CHECK_HELPER_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 SUDO_CHECK_HELPER_HEAD
-  agent_audit_prelude >>/usr/local/sbin/vps-agent-sudo-check
-  cat >>/usr/local/sbin/vps-agent-sudo-check <<'SUDO_CHECK_HELPER_BODY'
-printf 'vps-agent sudo helper access ok\n'
+  agent_audit_prelude >>/usr/local/sbin/vpsbuddy-sudo-check
+  cat >>/usr/local/sbin/vpsbuddy-sudo-check <<'SUDO_CHECK_HELPER_BODY'
+printf 'vpsbuddy sudo helper access ok\n'
 SUDO_CHECK_HELPER_BODY
 
   {
@@ -807,7 +786,7 @@ valid_package() {
 }
 
 usage() {
-  printf 'Usage: vps-agent-package update|upgrade|install <package> [...]\n' >&2
+  printf 'Usage: vpsbuddy-package update|upgrade|install <package> [...]\n' >&2
   exit 2
 }
 
@@ -854,17 +833,17 @@ case "$action" in
     ;;
 esac
 PACKAGE_HELPER_BODY
-  } >/usr/local/sbin/vps-agent-package
+  } >/usr/local/sbin/vpsbuddy-package
 
-  cat >/usr/local/sbin/vps-agent-service <<'SERVICE_HELPER_HEAD'
+  cat >/usr/local/sbin/vpsbuddy-service <<'SERVICE_HELPER_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 SERVICE_HELPER_HEAD
-  agent_audit_prelude >>/usr/local/sbin/vps-agent-service
-  cat >>/usr/local/sbin/vps-agent-service <<'SERVICE_HELPER_BODY'
+  agent_audit_prelude >>/usr/local/sbin/vpsbuddy-service
+  cat >>/usr/local/sbin/vpsbuddy-service <<'SERVICE_HELPER_BODY'
 
 usage() {
-  printf 'Usage: vps-agent-service start|stop|restart|reload|status|enable|disable <service>\n' >&2
+  printf 'Usage: vpsbuddy-service start|stop|restart|reload|status|enable|disable <service>\n' >&2
   exit 2
 }
 
@@ -890,15 +869,15 @@ case "$action" in
 esac
 SERVICE_HELPER_BODY
 
-  cat >/usr/local/sbin/vps-agent-logs <<'LOGS_HELPER_HEAD'
+  cat >/usr/local/sbin/vpsbuddy-logs <<'LOGS_HELPER_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 LOGS_HELPER_HEAD
-  agent_audit_prelude >>/usr/local/sbin/vps-agent-logs
-  cat >>/usr/local/sbin/vps-agent-logs <<'LOGS_HELPER_BODY'
+  agent_audit_prelude >>/usr/local/sbin/vpsbuddy-logs
+  cat >>/usr/local/sbin/vpsbuddy-logs <<'LOGS_HELPER_BODY'
 
 usage() {
-  printf 'Usage: vps-agent-logs <service> [lines]\n' >&2
+  printf 'Usage: vpsbuddy-logs <service> [lines]\n' >&2
   exit 2
 }
 
@@ -931,15 +910,15 @@ FIREWALL_HELPER_HEAD
     cat <<'FIREWALL_HELPER_BODY'
 
 usage() {
-  printf 'Usage: vps-agent-firewall web-on|web-off|status\n' >&2
+  printf 'Usage: vpsbuddy-firewall web-on|web-off|status\n' >&2
   exit 2
 }
 
 [[ "$#" -eq 1 ]] || usage
 case "$1:$firewall_backend" in
   web-on:ufw)
-    ufw allow 80/tcp comment 'vps-agent public http'
-    ufw allow 443/tcp comment 'vps-agent public https'
+    ufw allow 80/tcp comment 'vpsbuddy public http'
+    ufw allow 443/tcp comment 'vpsbuddy public https'
     ;;
   web-off:ufw)
     ufw --force delete allow 80/tcp || true
@@ -966,22 +945,21 @@ case "$1:$firewall_backend" in
     ;;
 esac
 FIREWALL_HELPER_BODY
-  } >/usr/local/sbin/vps-agent-firewall
+  } >/usr/local/sbin/vpsbuddy-firewall
 
-  rm -f /usr/local/sbin/vps-agent-deploy
   chmod 755 \
-    /usr/local/sbin/vps-agent-sudo-check \
-    /usr/local/sbin/vps-agent-package \
-    /usr/local/sbin/vps-agent-service \
-    /usr/local/sbin/vps-agent-logs \
-    /usr/local/sbin/vps-agent-firewall
+    /usr/local/sbin/vpsbuddy-sudo-check \
+    /usr/local/sbin/vpsbuddy-package \
+    /usr/local/sbin/vpsbuddy-service \
+    /usr/local/sbin/vpsbuddy-logs \
+    /usr/local/sbin/vpsbuddy-firewall
 }
 
 write_sudoers_policy() {
   local policy_full="${1:-$full_sudo}"
   local sudoers_file
 
-  sudoers_file="/etc/sudoers.d/90-vps-bootstrap-$admin_user"
+  sudoers_file="/etc/sudoers.d/90-vpsbuddy-$admin_user"
   generate_sudoers_policy_server "$policy_full" >"$sudoers_file"
   chmod 440 "$sudoers_file"
   visudo -cf "$sudoers_file" >/dev/null
@@ -1075,23 +1053,8 @@ install_grok_cli() {
 
   install -d -m 0755 /usr/local/bin
   ln -sf "$grok_bin" /usr/local/bin/grok
-  if [[ -x "$home_dir/.grok/bin/agent" ]]; then
-    ln -sf "$home_dir/.grok/bin/agent" /usr/local/bin/agent
-  fi
 
   sudo -H -u "$admin_user" "$grok_bin" --version >/dev/null
-}
-
-remove_legacy_third_party_grok_cli() {
-  if ! command_exists npm; then
-    return 0
-  fi
-
-  if npm list -g @vibe-kit/grok-cli >/dev/null 2>&1; then
-    log "removing legacy third-party Grok CLI npm package"
-    npm uninstall -g @vibe-kit/grok-cli || warn "failed to remove @vibe-kit/grok-cli"
-    return 0
-  fi
 }
 
 install_github_cli() {
@@ -1134,10 +1097,6 @@ install_agent_clis_if_requested() {
     warn "Codex CLI installation failed"
     failures=$((failures + 1))
   }
-  remove_legacy_third_party_grok_cli || {
-    warn "legacy third-party Grok CLI removal failed"
-    failures=$((failures + 1))
-  }
   install_grok_cli || {
     warn "Grok CLI installation failed"
     failures=$((failures + 1))
@@ -1146,13 +1105,14 @@ install_agent_clis_if_requested() {
     warn "GitHub CLI installation failed"
     failures=$((failures + 1))
   }
-  install_agent_auth_helper
-  install_agent_cli_update_timer
-  print_agent_cli_versions
 
   if [[ "$failures" -gt 0 ]]; then
     fail "one or more selected developer CLIs failed to install; public SSH remains open"
   fi
+
+  install_agent_auth_helper
+  install_agent_cli_update_timer
+  print_agent_cli_versions
 }
 
 install_agent_cli_update_timer() {
@@ -1213,45 +1173,44 @@ link_admin_command() {
   ln -sf "$command_path" "/usr/local/bin/$command_name"
 }
 
-printf '[vps-bootstrap] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
+printf '[vpsbuddy] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
 if run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'; then
   link_admin_command codex || true
 else
-  printf '[vps-bootstrap] warning: Codex CLI update failed; continuing with other agent CLI updates\n' >&2
+  printf '[vpsbuddy] warning: Codex CLI update failed; continuing with other agent CLI updates\n' >&2
 fi
 
 if run_as_admin 'command -v grok >/dev/null 2>&1'; then
-  printf '[vps-bootstrap] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
-  run_as_admin 'grok update' || printf '[vps-bootstrap] warning: Grok CLI update failed\n' >&2
+  printf '[vpsbuddy] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
+  run_as_admin 'grok update' || printf '[vpsbuddy] warning: Grok CLI update failed\n' >&2
 elif [[ -x "$home_dir/.grok/bin/grok" ]]; then
-  printf '[vps-bootstrap] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
-  run_as_admin "$(printf '%q' "$home_dir/.grok/bin/grok") update" || printf '[vps-bootstrap] warning: Grok CLI update failed\n' >&2
+  printf '[vpsbuddy] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
+  run_as_admin "$(printf '%q' "$home_dir/.grok/bin/grok") update" || printf '[vpsbuddy] warning: Grok CLI update failed\n' >&2
 else
-  printf '[vps-bootstrap] installing Grok from xAI official installer; accepted mutable installer trust boundary\n' >&2
-  run_as_admin 'curl -fsSL https://x.ai/cli/install.sh | bash' || printf '[vps-bootstrap] warning: Grok CLI install failed\n' >&2
+  printf '[vpsbuddy] installing Grok from xAI official installer; accepted mutable installer trust boundary\n' >&2
+  run_as_admin 'curl -fsSL https://x.ai/cli/install.sh | bash' || printf '[vpsbuddy] warning: Grok CLI install failed\n' >&2
 fi
 
 link_admin_command grok || true
-link_admin_command agent || true
 AGENT_CLI_UPDATE_BODY
-  } >/usr/local/sbin/vps-agent-cli-update
+  } >/usr/local/sbin/vpsbuddy-cli-update
 
-  chmod 755 /usr/local/sbin/vps-agent-cli-update
+  chmod 755 /usr/local/sbin/vpsbuddy-cli-update
 
-  cat >/etc/systemd/system/vps-agent-cli-update.service <<'AGENT_CLI_UPDATE_SERVICE'
+  cat >/etc/systemd/system/vpsbuddy-cli-update.service <<'AGENT_CLI_UPDATE_SERVICE'
 [Unit]
-Description=Update agent CLIs managed by vps-bootstrap
+Description=Update agent CLIs managed by vpsbuddy
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/vps-agent-cli-update
+ExecStart=/usr/local/sbin/vpsbuddy-cli-update
 AGENT_CLI_UPDATE_SERVICE
 
-  cat >/etc/systemd/system/vps-agent-cli-update.timer <<'AGENT_CLI_UPDATE_TIMER'
+  cat >/etc/systemd/system/vpsbuddy-cli-update.timer <<'AGENT_CLI_UPDATE_TIMER'
 [Unit]
-Description=Run vps-bootstrap agent CLI updates every two days
+Description=Run vpsbuddy agent CLI updates every two days
 
 [Timer]
 OnBootSec=30min
@@ -1264,25 +1223,25 @@ WantedBy=timers.target
 AGENT_CLI_UPDATE_TIMER
 
   systemctl daemon-reload
-  systemctl enable --now vps-agent-cli-update.timer
+  systemctl enable --now vpsbuddy-cli-update.timer
 }
 
 install_agent_auth_helper() {
-  log "installing /usr/local/bin/vps-agent-auth"
+  log "installing /usr/local/bin/vpsbuddy-auth"
 
-  cat >/usr/local/bin/vps-agent-auth <<'AGENT_AUTH_HELPER'
+  cat >/usr/local/bin/vpsbuddy-auth <<'AGENT_AUTH_HELPER'
 SERVER_SCRIPT_BODY
-  cat "$VPS_BOOTSTRAP_LIB_DIR/templates/vps-agent-auth.sh"
+  cat "$VPSBUDDY_LIB_DIR/templates/vpsbuddy-auth.sh"
   cat << 'SERVER_SCRIPT_BODY'
 AGENT_AUTH_HELPER
 
-  chmod 755 /usr/local/bin/vps-agent-auth
+  chmod 755 /usr/local/bin/vpsbuddy-auth
 }
 
 print_agent_cli_versions() {
-  printf 'VPS_BOOTSTRAP_CODEX_VERSION=%s\n' "$(codex --version 2>/dev/null | head -n 1 || true)"
-  printf 'VPS_BOOTSTRAP_GROK_VERSION=%s\n' "$(grok --version 2>/dev/null | head -n 1 || true)"
-  printf 'VPS_BOOTSTRAP_GH_VERSION=%s\n' "$(gh --version 2>/dev/null | head -n 1 || true)"
+  printf 'VPSBUDDY_CODEX_VERSION=%s\n' "$(codex --version 2>/dev/null | head -n 1 || true)"
+  printf 'VPSBUDDY_GROK_VERSION=%s\n' "$(grok --version 2>/dev/null | head -n 1 || true)"
+  printf 'VPSBUDDY_GH_VERSION=%s\n' "$(gh --version 2>/dev/null | head -n 1 || true)"
 }
 
 ensure_admin_user() {
@@ -1391,10 +1350,10 @@ configure_ufw() {
   systemctl enable --now ufw >/dev/null 2>&1 || true
   ufw default deny incoming
   ufw default allow outgoing
-  ufw allow in on tailscale0 to any port 22 proto tcp comment 'vps-bootstrap tailnet ssh'
+  ufw allow in on tailscale0 to any port 22 proto tcp comment 'vpsbuddy tailnet ssh'
 
   if [[ "$firewall_phase" == "prepare" ]]; then
-    ufw allow 22/tcp comment 'vps-bootstrap temporary public ssh'
+    ufw allow 22/tcp comment 'vpsbuddy temporary public ssh'
   else
     ufw --force delete allow 22/tcp || true
     ufw --force delete allow OpenSSH || true
@@ -1402,8 +1361,8 @@ configure_ufw() {
   fi
 
   if [[ "$web_enabled" == "1" ]]; then
-    ufw allow 80/tcp comment 'vps-bootstrap public http'
-    ufw allow 443/tcp comment 'vps-bootstrap public https'
+    ufw allow 80/tcp comment 'vpsbuddy public http'
+    ufw allow 443/tcp comment 'vpsbuddy public https'
   else
     ufw --force delete allow 80/tcp || true
     ufw --force delete allow 443/tcp || true
@@ -1474,11 +1433,11 @@ validate_effective_sshd_hardening() {
 write_sshd_hardening() {
   local snippet include_backup
 
-  snippet="/etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf"
+  snippet="/etc/ssh/sshd_config.d/00-vpsbuddy-hardening.conf"
   install -d -m 755 /etc/ssh/sshd_config.d
 
   if ! grep -Eiq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
-    include_backup="/etc/ssh/sshd_config.vps-bootstrap.bak.$(date +%Y%m%d%H%M%S)"
+    include_backup="/etc/ssh/sshd_config.vpsbuddy.bak.$(date +%Y%m%d%H%M%S)"
     cp -p /etc/ssh/sshd_config "$include_backup"
     {
       printf 'Include /etc/ssh/sshd_config.d/*.conf\n\n'
@@ -1490,7 +1449,7 @@ write_sshd_hardening() {
   fi
 
   cat >"$snippet" <<'SSHD_CONFIG'
-# Managed by vps-bootstrap. Do not edit directly.
+# Managed by vpsbuddy. Do not edit directly.
 PubkeyAuthentication yes
 PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -1508,7 +1467,6 @@ SSHD_CONFIG
     fail "sshd -t failed; removed hardening snippet and left current SSH policy active"
   fi
 
-  rm -f /etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf
   if ! validate_effective_sshd_hardening; then
     rm -f "$snippet"
     fail "effective sshd settings did not match the hardening policy; public SSH remains open"
@@ -1541,7 +1499,7 @@ run_prepare() {
   install_swap
   enable_service "$SSHD_SERVICE"
   configure_automatic_updates
-  install_ban_service
+  install_intrusion_prevention
   ensure_admin_user
   install_agent_sudo_helpers
   set_requested_hostname
@@ -1551,9 +1509,9 @@ run_prepare() {
   validate_prepare_state
   install_agent_clis_if_requested
 
-  printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
-  printf 'VPS_BOOTSTRAP_FIREWALL=%s\n' "$FIREWALL_BACKEND"
-  printf 'VPS_BOOTSTRAP_SWAP=%s\n' "$([[ "$swap_enabled" == "1" ]] && printf 'enabled' || printf 'disabled')"
+  printf 'VPSBUDDY_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
+  printf 'VPSBUDDY_FIREWALL=%s\n' "$FIREWALL_BACKEND"
+  printf 'VPSBUDDY_SWAP=%s\n' "$([[ "$swap_enabled" == "1" ]] && printf 'enabled' || printf 'disabled')"
   log "prepare phase complete; public SSH remains available until you verify the Tailnet admin login"
 }
 
@@ -1569,8 +1527,8 @@ run_harden() {
   configure_firewall harden
   enable_tailscale_ssh_if_requested
 
-  printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
-  printf 'VPS_BOOTSTRAP_FIREWALL=%s\n' "$FIREWALL_BACKEND"
+  printf 'VPSBUDDY_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
+  printf 'VPSBUDDY_FIREWALL=%s\n' "$FIREWALL_BACKEND"
   log "harden phase complete; SSH is restricted to Tailnet and public web ports follow requested policy"
 }
 
@@ -1608,7 +1566,8 @@ run_server_phase() {
   local selected_phase="$1"
   local phase_script status
 
-  phase_script="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-${selected_phase}.XXXXXX")" || return 1
+  phase_script="$(mktemp "${TMPDIR:-/tmp}/vpsbuddy-${selected_phase}.XXXXXX")" || return 1
+  trap 'rm -f "$phase_script"' RETURN
   chmod 700 "$phase_script"
   {
     generate_server_config_prelude "$selected_phase"
@@ -1620,7 +1579,6 @@ run_server_phase() {
   else
     status=$?
   fi
-  rm -f "$phase_script"
   return "$status"
 }
 
@@ -1629,7 +1587,7 @@ tailnet_ipv4() {
 }
 
 verify_prepared_admin() {
-  sudo -H -u "$VPS_ADMIN_USER" sudo -n /usr/local/sbin/vps-agent-sudo-check
+  sudo -H -u "$VPS_ADMIN_USER" sudo -n /usr/local/sbin/vpsbuddy-sudo-check
 }
 
 confirm_tailnet_login() {
@@ -1638,21 +1596,21 @@ confirm_tailnet_login() {
 
   cat >&2 << PROMPT
 
-[vps-bootstrap] Prepare is complete. Public SSH is still open.
-[vps-bootstrap] From another terminal on a device in your Tailnet, run:
-[vps-bootstrap]   ssh $VPS_ADMIN_USER@$tailnet_ip
-[vps-bootstrap] Keep this session open until that login works.
-[vps-bootstrap] Type yes only after the Tailnet login succeeds:
+[vpsbuddy] Prepare is complete. Public SSH is still open.
+[vpsbuddy] From another terminal on a device in your Tailnet, run:
+[vpsbuddy]   ssh $VPS_ADMIN_USER@$tailnet_ip
+[vpsbuddy] Keep this session open until that login works.
+[vpsbuddy] Type yes only after the Tailnet login succeeds:
 PROMPT
   answer="$(read_interactive_answer)" || return 1
   case "$answer" in
-    yes | YES | Yes)
+    yes | YES | Yes | y | Y)
       return 0
       ;;
     *)
       cat >&2 << PAUSED
-[vps-bootstrap] Setup paused. Public SSH remains open.
-[vps-bootstrap] Rerun this installer when you are ready to verify and harden the VPS.
+[vpsbuddy] Setup paused. Public SSH remains open.
+[vpsbuddy] Rerun this installer when you are ready to verify and harden the VPS.
 PAUSED
       return 1
       ;;
@@ -1681,8 +1639,8 @@ SUMMARY
     cat << 'AUTH'
 
 Authenticate the developer CLIs while logged in as the admin user:
-  vps-agent-auth --all
-  vps-agent-auth --status
+  vpsbuddy-auth --all
+  vpsbuddy-auth --status
 AUTH
   fi
 }
@@ -1704,11 +1662,11 @@ run_bootstrap() {
 
   confirmed="$(prompt_yes_no "Apply this configuration to the VPS")" || return 1
   if [[ "$confirmed" != "1" ]]; then
-    printf '[vps-bootstrap] No server changes were made.\n'
+    printf '[vpsbuddy] No server changes were made.\n'
     return 0
   fi
 
-  printf '[vps-bootstrap] Phase 1: prepare the VPS while public SSH remains open.\n'
+  printf '[vpsbuddy] Phase 1: prepare the VPS while public SSH remains open.\n'
   run_server_phase prepare || return 1
 
   tailnet_ip="$(tailnet_ipv4)"
@@ -1726,7 +1684,7 @@ run_bootstrap() {
     return 0
   fi
 
-  printf '[vps-bootstrap] Phase 2: apply SSH and firewall hardening.\n'
+  printf '[vpsbuddy] Phase 2: apply SSH and firewall hardening.\n'
   run_server_phase harden || return 1
   print_completion_summary "$tailnet_ip"
 }

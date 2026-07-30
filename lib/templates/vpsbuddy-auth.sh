@@ -4,7 +4,7 @@ set -Eeuo pipefail
 usage() {
   cat << 'USAGE'
 Usage:
-  vps-agent-auth [--all] [--status] [--codex] [--grok] [--github]
+  vpsbuddy-auth [--all] [--status] [--codex] [--grok] [--github]
 
 Runs native interactive authentication where available and prints setup checks
 for CLIs that use API-key based configuration. No tokens are accepted, copied,
