@@ -1852,23 +1852,20 @@ build_prepare_command() {
   local host="$2"
   local login_identity="${3-}"
   local login_options=""
+  local remote_runner="sudo bash"
 
   if [[ -n "$login_identity" ]]; then
     login_options="-i $(shell_quote "$login_identity") -o IdentitiesOnly=yes "
   fi
 
   if [[ "$login_user" == "root" ]]; then
-    printf 'paste or scan host public key -> temporary known_hosts; stream config + script | ssh -tt %s-o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
-      "$login_options" \
-      "$(shell_quote "$login_user@$host")" \
-      "$(shell_quote "bash -s")"
-    return 0
+    remote_runner="bash"
   fi
 
   printf 'paste or scan host public key -> temporary known_hosts; upload temporary script with scp; ssh -tt %s-o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
     "$login_options" \
     "$(shell_quote "$login_user@$host")" \
-    "$(shell_quote "sudo bash <remote-temp-script> prepare")"
+    "$(shell_quote "$remote_runner <remote-temp-script> prepare")"
 }
 
 build_admin_verify_command() {
@@ -1974,13 +1971,17 @@ SKIP
   esac
 }
 
-run_remote_prepare_with_sudo_login() {
+run_remote_prepare_from_file() {
   local public_key="$1"
   local known_hosts_file="$2"
-  local local_script remote_script remote_command status
+  local local_script remote_script remote_command remote_runner status
 
   local_script="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-prepare.XXXXXX")" || return 1
   remote_script="/tmp/vps-bootstrap-prepare-${VPS_LOGIN_USER}.$$.$RANDOM.sh"
+  remote_runner="sudo bash"
+  if [[ "$VPS_LOGIN_USER" == "root" ]]; then
+    remote_runner="bash"
+  fi
   set_initial_ssh_options "$known_hosts_file"
 
   {
@@ -2000,7 +2001,7 @@ run_remote_prepare_with_sudo_login() {
 
   rm -f "$local_script"
 
-  remote_command="sudo bash $(shell_quote "$remote_script") prepare; status=\$?; rm -f $(shell_quote "$remote_script"); exit \$status"
+  remote_command="$remote_runner $(shell_quote "$remote_script") prepare; status=\$?; rm -f $(shell_quote "$remote_script"); exit \$status"
   ssh \
     -tt \
     "${VPS_INITIAL_SSH_OPTIONS[@]}" \
@@ -2012,22 +2013,7 @@ run_remote_prepare() {
   local public_key="$1"
   local known_hosts_file="$2"
 
-  if [[ "$VPS_LOGIN_USER" == "root" ]]; then
-    set_initial_ssh_options "$known_hosts_file"
-    {
-      generate_remote_config_prelude prepare "$public_key"
-      generate_remote_script
-    } |
-      ssh \
-        -tt \
-        "${VPS_INITIAL_SSH_OPTIONS[@]}" \
-        "$VPS_LOGIN_USER@$VPS_HOST" \
-        'bash -s' -- \
-        prepare
-    return $?
-  fi
-
-  run_remote_prepare_with_sudo_login "$public_key" "$known_hosts_file"
+  run_remote_prepare_from_file "$public_key" "$known_hosts_file"
 }
 
 verify_admin_login() {

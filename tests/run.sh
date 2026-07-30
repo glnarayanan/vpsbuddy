@@ -486,6 +486,42 @@ test_bootstrap_continues_after_completed_prepare_session() {
   assert_contains "bootstrap reaches harden phase after prepare session closes" "$output" "Phase 3: harden over Tailnet"
 }
 
+test_root_prepare_uploads_script_before_tty_ssh() {
+  local output run_status
+
+  if output="$(
+    bash -c '
+      set -Eeuo pipefail
+      source lib/vps-bootstrap.sh
+      reset_config
+      VPS_HOST="example.test"
+      VPS_LOGIN_USER="root"
+      VPS_LOGIN_IDENTITY="tests/fixtures/identity_fixture"
+
+      scp() {
+        printf "scp:%s\n" "$*"
+      }
+      ssh() {
+        printf "ssh:%s\n" "$*"
+        if [[ "$*" == *"bash -s"* ]]; then
+          return 124
+        fi
+      }
+
+      run_remote_prepare "ssh-ed25519 AAAAexample" "/tmp/vps-bootstrap-known-hosts"
+    ' 2>&1
+  )"; then
+    run_status=0
+  else
+    run_status=$?
+  fi
+
+  assert_eq "root prepare avoids streamed TTY deadlock" "0" "$run_status"
+  assert_contains "root prepare uploads a temporary script" "$output" "scp:"
+  assert_contains "root prepare executes the uploaded script" "$output" "bash /tmp/vps-bootstrap-prepare-root"
+  assert_not_contains "root prepare does not execute bash from TTY stdin" "$output" "bash -s"
+}
+
 test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
   local expected_public_key prelude loaded_public_key loaded_hostname
   reset_config
@@ -677,6 +713,7 @@ test_dry_run_prints_rollback_safe_phase_ordering
 test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip
 test_parse_prepare_output_extracts_tailnet_ip
 test_bootstrap_continues_after_completed_prepare_session
+test_root_prepare_uploads_script_before_tty_ssh
 test_remote_config_prelude_preserves_public_key_and_empty_hostname
 test_parse_args_sets_default_user
 test_parse_args_requires_host

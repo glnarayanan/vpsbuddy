@@ -46,6 +46,8 @@ The tests cover:
 - SSH hardening snippet generation.
 - UFW and firewalld command generation.
 - Remote script support for apt, dnf, yum, Tailscale install, interactive `tailscale up`, and `sshd -t`.
+- Root and non-root prepare upload the generated script before terminal-attached
+  SSH runs it, so a forced terminal never carries script input.
 - Developer CLI install generation for Codex CLI, Grok CLI, and GitHub CLI.
 - Agent CLI helper generation for native auth commands plus Grok `XAI_API_KEY` status handling.
 - Agent CLI update timer generation for two-day Codex installer reruns and `grok update`.

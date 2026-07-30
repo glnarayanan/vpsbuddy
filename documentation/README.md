@@ -75,8 +75,10 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
   verification pass and you type `yes` after manually checking SSH from another
   terminal.
 - The normal path is to run the top-level CLI from a workstation. The VPS needs
-  no checkout or private key; the CLI sends the generated remote script over
-  SSH. Do not run only the generated remote prepare payload.
+  no checkout or private key. The CLI uploads a temporary generated prepare
+  script, runs it through terminal-attached SSH, and removes it. This keeps
+  interactive prompts separate from the script input. Do not run only the
+  generated remote prepare payload.
 - If neither agent CLI flag is set, the local CLI asks whether to install the
   developer CLIs before the first SSH connection. Answering `yes` selects the
   same install path as `--install-agent-clis`.

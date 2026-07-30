@@ -25,7 +25,17 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 
 Before the first remote phase, the local CLI pins the VPS SSH host key in a temporary `known_hosts` file. If the provider exposes the host public key, the operator can paste it. If not, the CLI scans the live SSH host key, prints the key and fingerprint, and requires explicit confirmation before pinning it. The script then uses strict host-key checking for the rest of the run.
 
-The first remote phase connects as the required `--login-user` and runs as root directly when that user is root, or through an interactive `sudo bash` step for non-root sudo-capable image users. It creates or reuses the admin user, installs the selected `--pubkey`, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs selected developer CLIs, and configures the firewall with temporary public SSH still allowed. It does not enable Tailscale SSH before local Tailnet OpenSSH verification, because Tailscale SSH ACLs can block that verification path.
+The first remote phase connects as the required `--login-user`. The local CLI
+uploads a temporary generated prepare script, runs it through terminal-attached
+SSH, and removes it. Root runs it with `bash`; non-root sudo-capable image users
+run it with `sudo bash`. Keeping the script in a file leaves SSH terminal input
+free for prompts and avoids waiting for end-of-file after prepare completes. The
+script creates or reuses the admin user, installs the selected `--pubkey`,
+installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables
+baseline services, optionally installs selected developer CLIs, and configures
+the firewall with temporary public SSH still allowed. It does not enable
+Tailscale SSH before local Tailnet OpenSSH verification, because Tailscale SSH
+ACLs can block that verification path.
 
 The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n /usr/local/sbin/vps-agent-sudo-check`. After that automated check succeeds, the CLI asks the operator to verify SSH from another terminal and type `yes` before the harden phase runs over the Tailnet connection.
 

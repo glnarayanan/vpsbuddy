@@ -33,6 +33,9 @@ changes, compatibility changes, and smoke-test notes.
   can continue to Tailnet verification.
 - Interactive bootstrap now asks whether to install Codex, Grok, and GitHub
   CLI; explicit install and skip flags remain available for unattended runs.
+- Root prepare now uploads and executes a temporary script instead of streaming
+  it through a forced SSH terminal, which could leave both shells waiting after
+  prepare completed.
 
 ### Removed
 
