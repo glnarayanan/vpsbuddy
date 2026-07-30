@@ -62,675 +62,338 @@ assert_order() {
   local haystack="$2"
   local first="$3"
   local second="$4"
-  local first_index second_index
+  local first_line second_line
 
-  first_index=$(printf '%s' "$haystack" | awk -v needle="$first" 'index($0, needle) { print NR; exit }')
-  second_index=$(printf '%s' "$haystack" | awk -v needle="$second" 'index($0, needle) { print NR; exit }')
-
-  if [[ -z "$first_index" || -z "$second_index" || "$first_index" -ge "$second_index" ]]; then
-    fail "$name: [$first] should appear before [$second]"
+  first_line="$(printf '%s\n' "$haystack" | grep -nF "$first" | tail -n 1 | cut -d: -f1)"
+  second_line="$(printf '%s\n' "$haystack" | grep -nF "$second" | tail -n 1 | cut -d: -f1)"
+  if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
+    fail "$name: [$first] must appear before [$second]"
     return
   fi
 
   pass "$name"
 }
 
-test_parse_args_sets_defaults_and_flags() {
+test_configuration_has_no_hidden_operator_defaults() {
   reset_config
-  parse_args \
-    --host 203.0.113.10 \
-    --login-user admin \
-    --user ops \
-    --pubkey tests/fixtures/id_ed25519.pub \
-    --identity tests/fixtures/identity_fixture \
-    --login-identity tests/fixtures/identity_fixture \
-    --hostname app-vps \
-    --enable-tailscale-ssh \
-    --full-sudo \
-    --no-web \
-    --dry-run
 
-  assert_eq "parse host" "203.0.113.10" "$VPS_HOST"
-  assert_eq "parse login user" "admin" "$VPS_LOGIN_USER"
-  assert_eq "parse admin user" "ops" "$VPS_ADMIN_USER"
-  assert_eq "parse pubkey" "tests/fixtures/id_ed25519.pub" "$VPS_PUBKEY"
-  assert_eq "parse identity" "tests/fixtures/identity_fixture" "$VPS_IDENTITY"
-  assert_eq "parse login identity" "tests/fixtures/identity_fixture" "$VPS_LOGIN_IDENTITY"
-  assert_eq "parse hostname" "app-vps" "$VPS_HOSTNAME"
-  assert_eq "parse tailscale ssh flag" "1" "$VPS_ENABLE_TAILSCALE_SSH"
-  assert_eq "parse agent cli install default" "0" "$VPS_INSTALL_AGENT_CLIS"
-  assert_eq "parse agent cli prompt default" "1" "$VPS_AGENT_CLIS_PROMPT"
-  assert_eq "parse full sudo flag" "1" "$VPS_FULL_SUDO"
-  assert_eq "swap setup enabled by default" "1" "$VPS_SWAP_ENABLED"
-  assert_eq "default swap size" "2G" "$VPS_SWAP_SIZE"
-  assert_eq "parse no web flag" "0" "$VPS_WEB"
-  assert_eq "parse dry-run flag" "1" "$VPS_DRY_RUN"
+  assert_eq "admin user has no default" "" "$VPS_ADMIN_USER"
+  assert_eq "swap choice has no default" "" "$VPS_SWAP_ENABLED"
+  assert_eq "swap size has no default" "" "$VPS_SWAP_SIZE"
+  assert_eq "web exposure has no default" "" "$VPS_WEB"
+  assert_eq "developer CLI choice has no default" "" "$VPS_INSTALL_AGENT_CLIS"
+  assert_eq "sudo policy has no default" "" "$VPS_FULL_SUDO"
 }
 
-test_parse_args_supports_installing_agent_clis() {
-  reset_config
-  parse_args --host example.test --login-user admin --install-agent-clis
-
-  assert_eq "install agent clis enables install" "1" "$VPS_INSTALL_AGENT_CLIS"
-  assert_eq "install agent clis disables prompt" "0" "$VPS_AGENT_CLIS_PROMPT"
-}
-
-test_parse_args_supports_web_equals_false() {
-  reset_config
-  parse_args --host example.test --login-user admin --web=false
-
-  assert_eq "web=false disables public web" "0" "$VPS_WEB"
-}
-
-test_parse_args_supports_swap_options() {
-  reset_config
-  parse_args --host example.test --login-user admin --swap-size 4G
-
-  assert_eq "swap size option" "4G" "$VPS_SWAP_SIZE"
-  assert_eq "swap remains enabled with custom size" "1" "$VPS_SWAP_ENABLED"
-
-  reset_config
-  parse_args --host example.test --login-user admin --no-swap
-
-  assert_eq "no-swap disables setup" "0" "$VPS_SWAP_ENABLED"
-}
-
-test_parse_args_rejects_invalid_swap_size() {
-  reset_config
-  if parse_args --host example.test --login-user admin --swap-size 0G > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
-    fail "invalid swap size should fail"
-    return
-  fi
-
-  pass "invalid swap size should fail"
-}
-
-test_parse_args_supports_skipping_agent_clis() {
-  reset_config
-  parse_args --host example.test --login-user admin --skip-agent-clis
-
-  assert_eq "skip agent clis disables install" "0" "$VPS_INSTALL_AGENT_CLIS"
-  assert_eq "skip agent clis disables prompt" "0" "$VPS_AGENT_CLIS_PROMPT"
-}
-
-test_agent_cli_prompt_accepts_yes_and_no() {
-  local install
-
-  install="$(
-    reset_config
-    read_interactive_answer() { printf 'yes'; }
-    confirm_agent_cli_install 2> /dev/null
-    printf '%s' "$VPS_INSTALL_AGENT_CLIS"
-  )"
-  assert_eq "agent cli prompt yes enables install" "1" "$install"
-
-  install="$(
-    reset_config
-    read_interactive_answer() { printf 'no'; }
-    confirm_agent_cli_install 2> /dev/null
-    printf '%s' "$VPS_INSTALL_AGENT_CLIS"
-  )"
-  assert_eq "agent cli prompt no skips install" "0" "$install"
-}
-
-test_parse_args_rejects_removed_agent_auth_options() {
-  reset_config
-  if parse_args --host example.test --agent-auth interactive > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
-    fail "removed --agent-auth should fail"
-    return
-  fi
-
-  if parse_args --host example.test --agent-auth-env-file tests/fixtures/agent-cli.env > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
-    fail "removed --agent-auth-env-file should fail"
-    return
-  fi
-
-  pass "removed agent auth options should fail"
-}
-
-test_identity_path_defaults_from_public_key() {
-  local identity
-  identity="$(detect_identity_path "/home/me/.ssh/id_ed25519.pub")"
-
-  assert_eq "identity path strips .pub" "/home/me/.ssh/id_ed25519" "$identity"
-}
-
-test_hardening_config_contains_required_directives() {
-  local config
-  config="$(generate_sshd_hardening_config)"
-
-  assert_contains "hardening enables pubkey" "$config" "PubkeyAuthentication yes"
-  assert_contains "hardening disables password" "$config" "PasswordAuthentication no"
-  assert_contains "hardening disables keyboard interactive" "$config" "KbdInteractiveAuthentication no"
-  assert_contains "hardening disables root login" "$config" "PermitRootLogin no"
-  assert_contains "hardening limits auth tries" "$config" "MaxAuthTries 3"
-  assert_contains "hardening disables x11" "$config" "X11Forwarding no"
-}
-
-test_ufw_rules_keep_public_ssh_until_harden_phase() {
-  local prepare harden
-  prepare="$(generate_ufw_rules prepare 1)"
-  harden="$(generate_ufw_rules harden 0)"
-
-  assert_contains "ufw prepare keeps temporary public ssh" "$prepare" "ufw allow 22/tcp"
-  assert_contains "ufw prepare allows tailnet ssh" "$prepare" "ufw allow in on tailscale0 to any port 22 proto tcp"
-  assert_contains "ufw prepare opens http" "$prepare" "ufw allow 80/tcp"
-  assert_contains "ufw harden removes public ssh" "$harden" "ufw --force delete allow 22/tcp"
-  assert_not_contains "ufw harden no web omits http" "$harden" "ufw allow 80/tcp"
-}
-
-test_firewalld_rules_remove_public_ssh_and_keep_web() {
-  local harden
-  harden="$(generate_firewalld_rules harden 1)"
-
-  assert_contains "firewalld creates tailnet zone" "$harden" "firewall-cmd --permanent --new-zone=tailnet"
-  assert_contains "firewalld binds tailscale interface" "$harden" "firewall-cmd --permanent --zone=tailnet --change-interface=tailscale0"
-  assert_contains "firewalld removes public ssh" "$harden" "firewall-cmd --permanent --zone=public --remove-service=ssh"
-  assert_contains "firewalld keeps http" "$harden" "firewall-cmd --permanent --zone=public --add-service=http"
-  assert_contains "firewalld keeps https" "$harden" "firewall-cmd --permanent --zone=public --add-service=https"
-}
-
-test_remote_script_contains_supported_distros_and_tailscale_flow() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "remote script reads os-release" "$script" ". /etc/os-release"
-  assert_contains "remote script supports apt" "$script" "apt-get update"
-  assert_contains "remote script supports dnf" "$script" "dnf makecache"
-  assert_contains "remote script supports yum" "$script" "yum makecache"
-  assert_contains "remote script installs swap tools" "$script" "firewalld util-linux"
-  assert_contains "remote script installs swap when enabled" "$script" "install_swap"
-  assert_contains "remote script keeps active swap" "$script" "active swap already exists; leaving it unchanged"
-  assert_contains "remote script refuses inactive swap overwrite" "$script" "refusing to overwrite it"
-  assert_contains "remote script persists swap in fstab" "$script" "/swapfile none swap sw 0 0"
-  assert_contains "remote script formats swap file" "$script" "mkswap \"\$swap_file\""
-  assert_contains "remote script activates swap file" "$script" "swapon \"\$swap_file\""
-  assert_contains "remote script installs swap before services" "$script" $'  install_required_packages\n  install_swap\n  enable_service'
-  assert_contains "remote script leaves update cadence to managed timer" "$script" "vps-os-update.timer controls the two-week update cadence"
-  assert_contains "remote script installs tailscale officially" "$script" "https://tailscale.com/install.sh"
-  assert_contains "remote script uses interactive tailscale up" "$script" "tailscale up --hostname"
-  assert_contains "remote script validates sshd" "$script" "sshd -t"
-}
-
-test_remote_script_installs_agent_clis_and_supports_auth_modes() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "remote script installs codex cli with official installer" "$script" "https://chatgpt.com/codex/install.sh"
-  assert_contains "remote script installs codex non-interactively" "$script" "CODEX_NON_INTERACTIVE=1 sh"
-  assert_contains "remote script treats codex install as optional" "$script" "Codex CLI installation failed; continuing with bootstrap"
-  assert_not_contains "remote script does not fatally abort on missing codex binary" "$script" "fail \"Codex CLI installer did not put codex on"
-  assert_contains "remote script installs official grok cli" "$script" "https://x.ai/cli/install.sh | bash"
-  assert_contains "remote script installs grok cli as admin user" "$script" "sudo -H -u \"\$admin_user\""
-  assert_contains "remote script treats grok install as optional" "$script" "Grok CLI installation failed; continuing with bootstrap"
-  assert_not_contains "remote script does not fatally abort on missing grok binary" "$script" "fail \"Grok CLI installer did not create"
-  assert_contains "remote script removes third-party grok package" "$script" "npm uninstall -g @vibe-kit/grok-cli"
-  assert_contains "remote script installs github cli apt repo" "$script" "https://cli.github.com/packages stable main"
-  assert_contains "remote script installs github cli rpm repo" "$script" "https://cli.github.com/packages/rpm/gh-cli.repo"
-  assert_contains "remote script treats github cli install as optional" "$script" "GitHub CLI installation failed; continuing with bootstrap"
-  assert_contains "remote script records codex version" "$script" "VPS_BOOTSTRAP_CODEX_VERSION="
-  assert_contains "remote script records grok version" "$script" "VPS_BOOTSTRAP_GROK_VERSION="
-  assert_contains "remote script records github cli version" "$script" "VPS_BOOTSTRAP_GH_VERSION="
-  assert_contains "remote script logs accepted codex installer trust" "$script" "accepted supply-chain trust boundary"
-  assert_not_contains "remote script does not install third-party grok package" "$script" "npm install -g @vibe-kit/grok-cli"
-  assert_not_contains "remote script does not install codex with npm" "$script" "npm install -g @openai/codex"
-  assert_not_contains "remote script does not install claude" "$script" "claude-code"
-}
-
-test_remote_script_installs_update_timers() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "remote script installs agent cli updater" "$script" "/usr/local/sbin/vps-agent-cli-update"
-  assert_contains "agent updater reruns codex installer" "$script" "https://chatgpt.com/codex/install.sh"
-  assert_contains "agent updater does not abort on codex failure" "$script" "Codex CLI update failed; continuing with other agent CLI updates"
-  assert_contains "agent updater runs grok update" "$script" "grok update"
-  assert_contains "agent updater does not abort on grok failure" "$script" "Grok CLI update failed"
-  assert_contains "agent updater installs two day timer" "$script" "OnUnitActiveSec=2d"
-  assert_contains "remote script installs os updater" "$script" "/usr/local/sbin/vps-os-update"
-  assert_contains "os updater runs apt unattended upgrade" "$script" "unattended-upgrade -d"
-  assert_contains "os updater supports dnf upgrade" "$script" "dnf -y upgrade"
-  assert_contains "os updater supports yum update" "$script" "yum -y update"
-  assert_contains "os updater installs two week timer" "$script" "OnUnitActiveSec=14d"
-  assert_contains "apt periodic unattended upgrade is every fourteen days" "$script" 'APT::Periodic::Unattended-Upgrade "14";'
-}
-
-test_remote_script_defers_tailscale_ssh_until_harden() {
-  local script prepare_body harden_body
-  script="$(generate_remote_script)"
-  prepare_body="$(printf '%s\n' "$script" | awk '/^run_prepare\(\)/,/^}/')"
-  harden_body="$(printf '%s\n' "$script" | awk '/^run_harden\(\)/,/^}/')"
-
-  assert_not_contains "prepare does not enable tailscale ssh before verification" "$prepare_body" "enable_tailscale_ssh_if_requested"
-  assert_contains "harden can enable requested tailscale ssh" "$harden_body" "enable_tailscale_ssh_if_requested"
-  assert_order "tailscale ssh waits until hardening policy is written" "$harden_body" "write_sudoers_policy \"\$full_sudo\"" "enable_tailscale_ssh_if_requested"
-}
-
-test_agent_auth_helper_uses_native_auth_only() {
-  local helper
-  helper="$(cat lib/templates/vps-agent-auth.sh)"
-
-  assert_contains "helper supports all mode" "$helper" "--all"
-  assert_contains "helper supports status mode" "$helper" "--status"
-  assert_contains "helper uses codex native auth" "$helper" "codex login"
-  assert_contains "helper supports grok setup" "$helper" "--grok"
-  assert_contains "helper runs grok login" "$helper" "grok_bin\" login"
-  assert_contains "helper documents xai api key env" "$helper" "XAI_API_KEY"
-  assert_contains "helper checks grok auth file" "$helper" ".grok/auth.json"
-  assert_contains "helper uses github native auth" "$helper" "gh auth login --hostname github.com --git-protocol ssh"
-  assert_contains "helper checks codex status" "$helper" "codex login status"
-  assert_contains "helper checks grok status" "$helper" "status_grok"
-  assert_contains "helper checks github status" "$helper" "gh auth status --hostname github.com"
-  assert_not_contains "helper does not use codex api key login" "$helper" "codex login --with-api-key"
-  assert_not_contains "helper does not use token login" "$helper" "gh auth login --with-token"
-  assert_not_contains "helper does not reference auth env file" "$helper" "agent-cli.env"
-  assert_not_contains "helper does not reference claude" "$helper" "claude"
-  assert_not_contains "helper does not use third-party grok settings" "$helper" "user-settings.json"
-}
-
-test_remote_script_installs_agent_auth_helper() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "remote script installs auth helper" "$script" "/usr/local/bin/vps-agent-auth"
-  assert_contains "remote script makes auth helper executable" "$script" "chmod 755 /usr/local/bin/vps-agent-auth"
-  assert_not_contains "remote script does not upload auth env" "$script" "agent-cli.env"
-  assert_not_contains "remote script does not store headless tokens" "$script" "ANTHROPIC_API_KEY"
-}
-
-test_sudoers_policy_is_scoped_by_default() {
-  local policy
-  policy="$(generate_sudoers_policy "deploy" "0")"
-
-  assert_contains "scoped sudo allows package helper" "$policy" "/usr/local/sbin/vps-agent-package"
-  assert_contains "scoped sudo allows service helper" "$policy" "/usr/local/sbin/vps-agent-service"
-  assert_contains "scoped sudo allows deploy helper" "$policy" "/usr/local/sbin/vps-agent-deploy"
-  assert_contains "scoped sudo allows sudo check helper" "$policy" "/usr/local/sbin/vps-agent-sudo-check"
-  assert_not_contains "scoped sudo avoids raw apt" "$policy" "/usr/bin/apt-get"
-  assert_not_contains "scoped sudo avoids raw systemctl" "$policy" "/usr/bin/systemctl"
-  assert_not_contains "scoped sudo avoids raw npm" "$policy" "/usr/bin/npm"
-  assert_not_contains "scoped sudo avoids user cli symlink" "$policy" "/usr/local/bin/grok"
-  assert_not_contains "scoped sudo avoids claude cli" "$policy" "/usr/bin/claude"
-  assert_not_contains "scoped sudo avoids all access" "$policy" "NOPASSWD:ALL"
-}
-
-test_sudoers_policy_supports_full_sudo_escape_hatch() {
-  local policy
-  policy="$(generate_sudoers_policy "deploy" "1")"
-
-  assert_contains "full sudo preserves nopasswd all" "$policy" "deploy ALL=(ALL) NOPASSWD:ALL"
-}
-
-test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "remote script grants temporary bootstrap sudo" "$script" "write_sudoers_policy \"1\""
-  assert_contains "remote script installs bounded sudo helpers" "$script" "install_agent_sudo_helpers"
-  assert_contains "remote script writes package helper" "$script" "/usr/local/sbin/vps-agent-package"
-  assert_contains "remote script writes deploy helper" "$script" "/usr/local/sbin/vps-agent-deploy"
-  assert_contains "remote script writes final requested sudo policy" "$script" "write_sudoers_policy \"\$full_sudo\""
-  assert_order "remote script final sudo policy happens during harden" "$script" "write_sshd_hardening" "write_sudoers_policy \"\$full_sudo\""
-}
-
-test_host_public_key_validation_and_known_hosts() {
-  local known_hosts scanned_key
-
-  validate_host_public_key_line "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample"
-  if validate_host_public_key_line "SHA256:not-a-public-key" > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
-    fail "fingerprint should not be accepted as host public key"
-    return
-  fi
-
-  scanned_key="$(
-    printf '# comment\n203.0.113.10 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample\n' |
-      extract_keyscan_public_key
-  )"
-  assert_eq "keyscan parser extracts public key line" "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample" "$scanned_key"
-
-  known_hosts="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-test-known-hosts.XXXXXX")"
-  write_known_hosts_file "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAexample" "$known_hosts"
-  assert_contains "known hosts uses stable alias" "$(cat "$known_hosts")" "vps-bootstrap-target ssh-ed25519"
-  rm -f "$known_hosts"
-}
-
-test_dry_run_prints_rollback_safe_phase_ordering() {
+test_guided_dry_run_captures_operator_configuration() {
   local output
-  reset_config
+
   output="$(
-    main \
-      --host 203.0.113.10 \
-      --login-user admin \
-      --pubkey tests/fixtures/id_ed25519.pub \
-      --identity tests/fixtures/identity_fixture \
-      --dry-run
-  )"
-
-  assert_contains "dry-run announces no remote mutation" "$output" "Dry run: no SSH connections will be opened."
-  assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare through admin"
-  assert_contains "dry-run includes pinned host key note" "$output" "temporary known_hosts"
-  assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
-  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: ask during interactive bootstrap"
-  assert_contains "dry-run includes swap config" "$output" "swap: ensure active (2G if no existing swap)"
-  assert_contains "dry-run explains agent cli choice" "$output" "pass --install-agent-clis or --skip-agent-clis"
-  assert_not_contains "dry-run omits post setup auth command when skipped" "$output" "vps-agent-auth --all"
-  assert_contains "dry-run includes manual harden checkpoint" "$output" "Manual checkpoint"
-  assert_contains "dry-run includes harden phase" "$output" "Phase 3: harden over Tailnet"
-  assert_order "dry-run verifies before hardening" "$output" "Phase 2: verify Tailnet key login" "Phase 3: harden over Tailnet"
-  assert_order "dry-run prepares before verification" "$output" "Phase 1: prepare through admin" "Phase 2: verify Tailnet key login"
-}
-
-test_build_prepare_command_uses_sudo_for_non_root_login_user() {
-  local command
-  command="$(build_prepare_command "admin" "203.0.113.10")"
-
-  assert_contains "prepare command targets login user" "$command" "admin@203.0.113.10"
-  assert_contains "prepare command uploads script for non-root" "$command" "upload temporary script with scp"
-  assert_contains "prepare command uses sudo for non-root" "$command" "sudo\\ bash"
-}
-
-test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip() {
-  local command
-  command="$(build_admin_verify_command "deploy" "100.64.0.10" "tests/fixtures/identity_fixture")"
-
-  assert_contains "verify command uses batch mode" "$command" "-o BatchMode=yes"
-  assert_contains "verify command pins known hosts file" "$command" "UserKnownHostsFile=<temporary-known-hosts>"
-  assert_contains "verify command uses host key alias" "$command" "HostKeyAlias=vps-bootstrap-target"
-  assert_contains "verify command requires strict host checking" "$command" "StrictHostKeyChecking=yes"
-  assert_contains "verify command pins identity" "$command" "-i tests/fixtures/identity_fixture"
-  assert_contains "verify command targets tailnet ip" "$command" "deploy@100.64.0.10"
-  assert_contains "verify command checks bounded sudo helper" "$command" "sudo -n /usr/local/sbin/vps-agent-sudo-check"
-}
-
-test_parse_prepare_output_extracts_tailnet_ip() {
-  local output ip
-  output=$'some log\nVPS_BOOTSTRAP_TAILSCALE_IP=100.64.0.25\nmore log'
-  ip="$(parse_prepare_tailnet_ip "$output")"
-
-  assert_eq "parse prepare tailnet ip" "100.64.0.25" "$ip"
-}
-
-test_bootstrap_continues_after_completed_prepare_session() {
-  local output
-  output="$(
-    bash -c '
-      source lib/vps-bootstrap.sh
-      reset_config
-      VPS_HOST="example.test"
-      VPS_LOGIN_USER="root"
-      VPS_ADMIN_USER="deploy"
-      VPS_PUBKEY="tests/fixtures/id_ed25519.pub"
-      VPS_IDENTITY="tests/fixtures/identity_fixture"
-      VPS_AGENT_CLIS_PROMPT="0"
-
-      validate_local_files() { :; }
-      read_public_key() { printf "ssh-ed25519 AAAAexample"; }
-      prompt_host_public_key() { printf "ssh-ed25519 AAAAhost"; }
-      write_known_hosts_file() { :; }
-      run_remote_prepare() {
-        printf "VPS_BOOTSTRAP_TAILSCALE_IP=100.64.0.25\\n"
-        printf "[vps-bootstrap] prepare phase complete; public SSH remains available until local Tailnet login verification passes\\n"
-        return 7
-      }
-      verify_admin_login() { :; }
-      confirm_harden_after_manual_ssh_check() { return 0; }
-      confirm_tailscale_ssh_acl_ready() { :; }
-      run_remote_harden() { :; }
-
-      run_bootstrap
-    ' 2>&1
-  )"
-
-  assert_contains "prepare status warning is visible" "$output" "continuing with Tailnet verification"
-  assert_contains "bootstrap reaches verify phase after prepare session closes" "$output" "Phase 2: verify Tailnet key login"
-  assert_contains "bootstrap reaches harden phase after prepare session closes" "$output" "Phase 3: harden over Tailnet"
-}
-
-test_root_prepare_uploads_script_before_tty_ssh() {
-  local output run_status
-
-  if output="$(
     bash -c '
       set -Eeuo pipefail
       source lib/vps-bootstrap.sh
-      reset_config
-      VPS_HOST="example.test"
-      VPS_LOGIN_USER="root"
-      VPS_LOGIN_IDENTITY="tests/fixtures/identity_fixture"
-
-      scp() {
-        printf "scp:%s\n" "$*"
+      exec 3<<<$'"'"'deploy\nyes\n\n4G\nyes\nyes\nyes\nno\nno\n'"'"'
+      VPS_INPUT_FD=3
+      detect_existing_public_key() {
+        cat tests/fixtures/id_ed25519.pub
       }
-      ssh() {
-        printf "ssh:%s\n" "$*"
-        if [[ "$*" == *"bash -s"* ]]; then
-          return 124
-        fi
+      has_active_swap() {
+        return 1
       }
-
-      run_remote_prepare "ssh-ed25519 AAAAexample" "/tmp/vps-bootstrap-known-hosts"
+      main --dry-run
     ' 2>&1
-  )"; then
-    run_status=0
+  )"
+
+  assert_contains "dry-run captures admin user" "$output" "Admin user: deploy"
+  assert_contains "dry-run captures existing SSH key" "$output" "SSH public key: SHA256:"
+  assert_contains "dry-run keeps current hostname when blank" "$output" "Hostname: keep current"
+  assert_contains "dry-run captures swap size" "$output" "Swap: create 4G"
+  assert_contains "dry-run captures public web choice" "$output" "Public web ports: open 80/443"
+  assert_contains "dry-run captures developer CLI choice" "$output" "Developer CLIs: install"
+  assert_contains "dry-run captures update choice" "$output" "Automatic OS updates: enable"
+  assert_contains "dry-run captures scoped sudo choice" "$output" "Sudo policy: scoped helpers"
+  assert_contains "dry-run captures Tailscale SSH choice" "$output" "Tailscale SSH: disabled"
+  assert_contains "dry-run does not mutate server" "$output" "Dry run complete; no server changes were made."
+}
+
+test_fallback_key_and_no_swap_are_captured() {
+  local output public_key
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+
+  output="$(
+    TEST_PUBLIC_KEY="$public_key" bash -c '
+      set -Eeuo pipefail
+      source lib/vps-bootstrap.sh
+      exec 3<<<"deploy
+${TEST_PUBLIC_KEY}
+
+none
+no
+no
+no
+no
+no"
+      VPS_INPUT_FD=3
+      detect_existing_public_key() {
+        return 1
+      }
+      has_active_swap() {
+        return 1
+      }
+      main --dry-run
+    ' 2>&1
+  )"
+
+  assert_contains "dry-run accepts a pasted public key" "$output" "SSH public key: SHA256:"
+  assert_contains "dry-run captures no swap" "$output" "Swap: leave disabled"
+}
+
+test_root_and_restricted_detected_keys_are_rejected() {
+  local detected key_home
+
+  if validate_admin_user root > /dev/null 2>&1; then
+    fail "root admin user is rejected"
   else
-    run_status=$?
+    pass "root admin user is rejected"
   fi
 
-  assert_eq "root prepare avoids streamed TTY deadlock" "0" "$run_status"
-  assert_contains "root prepare uploads a temporary script" "$output" "scp:"
-  assert_contains "root prepare executes the uploaded script" "$output" "bash /tmp/vps-bootstrap-prepare-root"
-  assert_not_contains "root prepare does not execute bash from TTY stdin" "$output" "bash -s"
-}
-
-test_remote_config_prelude_preserves_public_key_and_empty_hostname() {
-  local expected_public_key prelude loaded_public_key loaded_hostname
-  reset_config
-  VPS_ADMIN_USER="deploy"
-  VPS_HOSTNAME=""
-  expected_public_key="$(read_public_key tests/fixtures/id_ed25519.pub)"
-  prelude="$(generate_remote_config_prelude prepare "$expected_public_key")"
-
-  loaded_public_key="$(
-    public_key=""
-    requested_hostname="not-empty"
-    eval "$prelude"
-    printf '%s' "$public_key"
+  key_home="$(mktemp -d "${TMPDIR:-/tmp}/vps-bootstrap-key-home.XXXXXX")"
+  mkdir -p "$key_home/.ssh"
+  printf 'restrict %s\n' "$(cat tests/fixtures/id_ed25519.pub)" > "$key_home/.ssh/authorized_keys"
+  detected="$(
+    login_home() {
+      printf '%s\n' "$key_home"
+    }
+    detect_existing_public_key || true
   )"
-  loaded_hostname="$(
-    requested_hostname="not-empty"
-    eval "$prelude"
-    printf '%s' "$requested_hostname"
-  )"
+  rm -rf "$key_home"
 
-  assert_eq "remote config preserves spaced public key" "$expected_public_key" "$loaded_public_key"
-  assert_eq "remote config preserves empty hostname" "" "$loaded_hostname"
-  assert_contains "remote config sets phase" "$prelude" "phase=prepare"
-  assert_contains "remote config sets swap enabled" "$prelude" "swap_enabled=1"
-  assert_contains "remote config sets swap size" "$prelude" "swap_size=2G"
+  assert_eq "restricted authorized_keys line is not stripped and reused" "" "$detected"
 }
 
-test_parse_args_sets_default_user() {
-  reset_config
-  parse_args --host example.test --login-user admin
+run_stubbed_bootstrap() {
+  local confirmation="$1"
+  local public_key
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
 
-  assert_eq "default user is deploy" "deploy" "$VPS_ADMIN_USER"
-  assert_eq "login identity defaults to SSH agent or config" "" "$VPS_LOGIN_IDENTITY"
+  TEST_CONFIRMATION="$confirmation" TEST_PUBLIC_KEY="$public_key" bash -c '
+    set -Eeuo pipefail
+    source lib/vps-bootstrap.sh
+    exec 3<<<"deploy
+yes
+
+none
+no
+no
+no
+no
+no
+yes
+${TEST_CONFIRMATION}"
+    VPS_INPUT_FD=3
+    require_vps_root() {
+      return 0
+    }
+    detect_existing_public_key() {
+      printf "%s\n" "$TEST_PUBLIC_KEY"
+    }
+    has_active_swap() {
+      return 1
+    }
+    run_server_phase() {
+      printf "phase:%s\n" "$1"
+    }
+    tailnet_ipv4() {
+      printf "100.64.0.10\n"
+    }
+    verify_prepared_admin() {
+      printf "sudo-check:ok\n"
+    }
+    print_completion_summary() {
+      printf "summary:%s\n" "$1"
+    }
+    run_bootstrap
+  ' 2>&1
 }
 
-test_initial_ssh_options_support_explicit_login_identity() {
-  reset_config
-  VPS_LOGIN_IDENTITY="tests/fixtures/identity_fixture"
-  set_initial_ssh_options "/tmp/vps-bootstrap-known-hosts"
+test_tailnet_confirmation_controls_hardening() {
+  local paused_output completed_output
 
-  assert_contains "initial ssh options pin login identity" "${VPS_INITIAL_SSH_OPTIONS[*]}" "-i tests/fixtures/identity_fixture"
-  assert_contains "initial ssh options restrict identities" "${VPS_INITIAL_SSH_OPTIONS[*]}" "IdentitiesOnly=yes"
+  paused_output="$(run_stubbed_bootstrap no)"
+  assert_contains "prepare runs before Tailnet confirmation" "$paused_output" "phase:prepare"
+  assert_contains "declined confirmation pauses setup" "$paused_output" "Setup paused. Public SSH remains open."
+  assert_not_contains "declined confirmation does not harden" "$paused_output" "phase:harden"
 
-  reset_config
-  set_initial_ssh_options "/tmp/vps-bootstrap-known-hosts"
-  assert_not_contains "initial ssh options preserve agent config" "${VPS_INITIAL_SSH_OPTIONS[*]}" "IdentitiesOnly=yes"
+  completed_output="$(run_stubbed_bootstrap yes)"
+  assert_order "confirmed Tailnet login hardens after prepare" "$completed_output" "phase:prepare" "phase:harden"
+  assert_contains "confirmed Tailnet login completes" "$completed_output" "summary:100.64.0.10"
 }
 
-test_parse_args_requires_host() {
-  reset_config
-  if parse_args --user deploy > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
-    fail "missing host should fail"
+test_legacy_ssh_orchestration_is_removed() {
+  local source
+  source="$(cat lib/vps-bootstrap.sh)"
+
+  assert_not_contains "host option removed" "$source" "vps-bootstrap --host"
+  assert_not_contains "login identity option removed" "$source" "--login-identity"
+  assert_not_contains "remote prepare removed" "$source" "run_remote_prepare"
+  assert_not_contains "remote harden removed" "$source" "run_remote_harden"
+  assert_not_contains "SSH transport removed" "$source" "ssh -tt"
+  assert_not_contains "SCP transport removed" "$source" "scp "
+}
+
+test_checkout_free_installer_downloads_and_runs_bundle() {
+  local installer
+
+  if [[ ! -f install.sh ]]; then
+    fail "checkout-free installer exists"
     return
   fi
 
-  pass "missing host should fail"
+  installer="$(cat install.sh)"
+  assert_contains "installer downloads one repository archive" "$installer" "codeload.github.com"
+  assert_contains "installer bounds connect time" "$installer" "--connect-timeout 15"
+  assert_contains "installer bounds total time" "$installer" "--max-time 120"
+  assert_contains "installer extracts one archive" "$installer" "tar -xzf"
+  assert_contains "installer downloads bootstrap entrypoint" "$installer" "bin/vps-bootstrap"
+  assert_contains "installer downloads bootstrap library" "$installer" "lib/vps-bootstrap.sh"
+  assert_contains "installer downloads helper templates" "$installer" "lib/templates/vps-agent-auth.sh"
+  assert_contains "installer runs downloaded entrypoint" "$installer" "\"\$install_dir/bin/vps-bootstrap\" \"\$@\""
 }
 
-test_parse_args_requires_login_user() {
-  reset_config
-  if parse_args --host example.test > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
-    fail "missing login user should fail"
-    return
-  fi
+test_checkout_free_installer_executes_downloaded_bundle() {
+  local output public_key
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
 
-  pass "missing login user should fail"
-}
-
-test_parse_args_doctor_does_not_require_host() {
-  reset_config
-  parse_args doctor --pubkey tests/fixtures/id_ed25519.pub --identity tests/fixtures/identity_fixture
-
-  assert_eq "doctor mode enabled" "1" "$VPS_DOCTOR"
-  assert_eq "doctor mode allows empty host" "" "$VPS_HOST"
-}
-
-test_validate_local_files_rejects_missing_login_identity() {
-  reset_config
-  VPS_PUBKEY="tests/fixtures/id_ed25519.pub"
-  VPS_IDENTITY="tests/fixtures/identity_fixture"
-  VPS_LOGIN_IDENTITY="tests/fixtures/missing-login-identity"
-
-  if validate_local_files > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
-    fail "missing login identity should fail"
-    return
-  fi
-
-  pass "missing login identity should fail"
-}
-
-test_build_prepare_command_includes_login_identity() {
-  local command
-  command="$(build_prepare_command root 203.0.113.10 tests/fixtures/identity_fixture)"
-
-  assert_contains "prepare command pins login identity" "$command" "-i tests/fixtures/identity_fixture"
-  assert_contains "prepare command restricts login identities" "$command" "-o IdentitiesOnly=yes"
-}
-
-test_remote_script_prepends_missing_sshd_include() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "remote script backs up sshd config before include edit" "$script" "sshd_config.vps-bootstrap.bak"
-  assert_contains "remote script prepends include before existing sshd directives" "$script" "cat /etc/ssh/sshd_config"
-  assert_not_contains "remote script does not append include after existing sshd directives" "$script" ">>/etc/ssh/sshd_config"
-}
-
-test_remote_script_installs_agent_helper_audit_logging() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "audit prelude template defines finish hook" "$(cat lib/templates/vps-agent-audit-prelude.sh)" "vps_agent_audit_finish()"
-  assert_contains "helper audit writes jsonl log" "$script" "/var/log/vps-agent-actions.log"
-  assert_contains "helper audit records helper name" "$script" '"helper":"%s"'
-  assert_contains "helper audit records exit code" "$script" '"exit_code":%s'
-  assert_contains "package helper receives audit prelude" "$script" "agent_audit_prelude"
-  assert_contains "agent cli updater receives audit prelude" "$script" "AGENT_CLI_UPDATE_BODY"
-}
-
-test_remote_script_defaults_skip_agent_clis_without_prelude() {
-  local script
-  script="$(generate_remote_script)"
-
-  assert_contains "remote script defaults agent clis off" "$script" "install_agent_clis=\"\${install_agent_clis:-0}\""
-  assert_not_contains "remote script does not default agent clis on" "$script" "install_agent_clis=\"\${install_agent_clis:-1}\""
-}
-
-test_audit_prelude_handles_empty_args_and_suppresses_write_errors() {
-  local output status
-
-  set +e
   output="$(
-    bash -c '
+    TEST_REPO_ROOT="$ROOT_DIR" TEST_PUBLIC_KEY="$public_key" bash -c '
       set -Eeuo pipefail
-      source lib/templates/vps-agent-audit-prelude.sh
-      vps_agent_audit_finish 0
+      curl() {
+        local argument archive_path="" expect_path=0 bundle_dir
+        for argument in "$@"; do
+          if [[ "$expect_path" == "1" ]]; then
+            archive_path="$argument"
+            expect_path=0
+            continue
+          fi
+          if [[ "$argument" == "-o" ]]; then
+            expect_path=1
+          fi
+        done
+
+        bundle_dir="$(mktemp -d "${TMPDIR:-/tmp}/vps-bootstrap-bundle.XXXXXX")"
+        mkdir -p "$bundle_dir/repository/bin" "$bundle_dir/repository/lib/templates"
+        cp "$TEST_REPO_ROOT/bin/vps-bootstrap" "$bundle_dir/repository/bin/vps-bootstrap"
+        cp "$TEST_REPO_ROOT/lib/vps-bootstrap.sh" "$bundle_dir/repository/lib/vps-bootstrap.sh"
+        cp "$TEST_REPO_ROOT/lib/templates/vps-agent-audit-prelude.sh" "$bundle_dir/repository/lib/templates/vps-agent-audit-prelude.sh"
+        cp "$TEST_REPO_ROOT/lib/templates/vps-agent-auth.sh" "$bundle_dir/repository/lib/templates/vps-agent-auth.sh"
+        tar -czf "$archive_path" -C "$bundle_dir" repository
+        rm -rf "$bundle_dir"
+      }
+      export -f curl
+
+      exec 3<<<"deploy
+${TEST_PUBLIC_KEY}
+
+none
+no
+no
+no
+no
+no"
+      export VPS_INPUT_FD=3
+      export SUDO_USER=vps-bootstrap-test-missing
+      bash install.sh --dry-run
     ' 2>&1
   )"
-  status="$?"
-  set -e
 
-  assert_eq "audit prelude empty args status" "0" "$status"
-  assert_eq "audit prelude suppresses log write errors" "" "$output"
+  assert_contains "downloaded installer bundle runs" "$output" "Dry run complete; no server changes were made."
+
+  if bash -c '
+    set -Eeuo pipefail
+    curl() {
+      return 28
+    }
+    export -f curl
+    bash install.sh --dry-run
+  ' > /dev/null 2>&1; then
+    fail "failed installer download stops before bootstrap"
+  else
+    pass "failed installer download stops before bootstrap"
+  fi
 }
 
-test_doctor_prints_read_only_audit() {
-  local output
-  reset_config
-  output="$(
-    main doctor \
-      --host 203.0.113.10 \
-      --pubkey tests/fixtures/id_ed25519.pub \
-      --identity tests/fixtures/identity_fixture
-  )"
+test_generated_server_phase_keeps_security_controls() {
+  local server_script
+  server_script="$(generate_server_script)"
 
-  assert_contains "doctor announces read-only audit" "$output" "Read-only audit: no SSH connections will be opened"
-  assert_contains "doctor checks local inputs" "$output" "== Local bootstrap inputs =="
-  assert_contains "doctor reports host key expectation" "$output" "first SSH host key"
-  assert_contains "doctor prints provider firewall checklist" "$output" "== Provider firewall checklist =="
-  assert_contains "doctor checks vps state" "$output" "== VPS state checks when run on the server =="
-  assert_contains "doctor reports swap plan" "$output" "swap: ensure active (2G if no existing swap)"
-  assert_contains "doctor observes exposed ports" "$output" "== Exposed ports observation =="
-  assert_contains "doctor reports success summary" "$output" "Doctor completed without blocking local input issues."
+  if printf '%s\n' "$server_script" | bash -n; then
+    pass "generated server phase parses"
+  else
+    fail "generated server phase parses"
+  fi
+
+  assert_contains "swap rejects symlinks" "$server_script" 'is a symlink; refusing to use it for swap'
+  assert_contains "prepare keeps public SSH rule" "$server_script" 'configure_firewall prepare'
+  assert_contains "hardening writes SSH policy" "$server_script" 'write_sshd_hardening'
+  assert_contains "hardening uses the first SSH drop-in" "$server_script" '00-vps-bootstrap-hardening.conf'
+  assert_contains "hardening checks effective SSH settings" "$server_script" 'validate_effective_sshd_hardening'
+  assert_contains "hardening writes sudo policy" "$server_script" "write_sudoers_policy \"\$full_sudo\""
+  assert_contains "developer CLI setup remains" "$server_script" 'install_agent_clis_if_requested'
+  assert_contains "selected developer CLI failure stops prepare" "$server_script" 'one or more selected developer CLIs failed to install'
+  assert_contains "automatic updates follow operator choice" "$server_script" 'vps-bootstrap automatic OS updates disabled'
+  assert_contains "automatic update opt-out removes timer" "$server_script" '/etc/systemd/system/vps-os-update.timer'
+  assert_contains "legacy automatic update config is handled" "$server_script" '/etc/apt/apt.conf.d/20auto-upgrades'
+  assert_contains "root admin is rejected on the server" "$server_script" 'root cannot be the managed admin user'
+  assert_contains "UID 0 aliases are rejected" "$server_script" 'managed admin user must not have UID 0'
+  assert_contains "prepare disables existing Tailscale SSH" "$server_script" 'tailscale set --ssh=false'
+  assert_not_contains "unsafe deploy helper is removed" "$server_script" 'Usage: vps-agent-deploy'
+  assert_order \
+    "SSH policy is validated before public SSH closes" \
+    "$server_script" \
+    'write_sshd_hardening' \
+    'configure_firewall harden'
+  assert_order \
+    "Tailscale SSH is disabled before prepare firewall" \
+    "$server_script" \
+    'disable_tailscale_ssh_for_verification' \
+    'configure_firewall prepare'
 }
 
-test_parse_args_sets_defaults_and_flags
-test_parse_args_supports_installing_agent_clis
-test_parse_args_supports_web_equals_false
-test_parse_args_supports_swap_options
-test_parse_args_rejects_invalid_swap_size
-test_parse_args_supports_skipping_agent_clis
-test_agent_cli_prompt_accepts_yes_and_no
-test_parse_args_rejects_removed_agent_auth_options
-test_identity_path_defaults_from_public_key
-test_hardening_config_contains_required_directives
-test_ufw_rules_keep_public_ssh_until_harden_phase
-test_firewalld_rules_remove_public_ssh_and_keep_web
-test_remote_script_contains_supported_distros_and_tailscale_flow
-test_remote_script_defers_tailscale_ssh_until_harden
-test_remote_script_installs_agent_clis_and_supports_auth_modes
-test_remote_script_installs_update_timers
-test_agent_auth_helper_uses_native_auth_only
-test_remote_script_installs_agent_auth_helper
-test_sudoers_policy_is_scoped_by_default
-test_sudoers_policy_supports_full_sudo_escape_hatch
-test_remote_script_uses_temporary_bootstrap_sudo_then_final_policy
-test_host_public_key_validation_and_known_hosts
-test_dry_run_prints_rollback_safe_phase_ordering
-test_build_admin_verify_command_uses_batch_mode_and_tailnet_ip
-test_parse_prepare_output_extracts_tailnet_ip
-test_bootstrap_continues_after_completed_prepare_session
-test_root_prepare_uploads_script_before_tty_ssh
-test_remote_config_prelude_preserves_public_key_and_empty_hostname
-test_parse_args_sets_default_user
-test_parse_args_requires_host
-test_parse_args_requires_login_user
-test_parse_args_doctor_does_not_require_host
-test_validate_local_files_rejects_missing_login_identity
-test_initial_ssh_options_support_explicit_login_identity
-test_build_prepare_command_includes_login_identity
-test_remote_script_prepends_missing_sshd_include
-test_remote_script_installs_agent_helper_audit_logging
-test_remote_script_defaults_skip_agent_clis_without_prelude
-test_audit_prelude_handles_empty_args_and_suppresses_write_errors
-test_doctor_prints_read_only_audit
+test_server_config_prelude_carries_every_choice() {
+  local prelude
+
+  VPS_ADMIN_USER="ops"
+  VPS_PUBLIC_KEY="$(cat tests/fixtures/id_ed25519.pub)"
+  VPS_HOSTNAME="apps-1"
+  VPS_ENABLE_TAILSCALE_SSH="0"
+  VPS_WEB="1"
+  VPS_INSTALL_AGENT_CLIS="1"
+  VPS_AUTOMATIC_UPDATES="1"
+  VPS_FULL_SUDO="0"
+  VPS_SWAP_ENABLED="1"
+  VPS_SWAP_SIZE="8G"
+  prelude="$(generate_server_config_prelude prepare)"
+
+  assert_contains "phase prelude carries admin user" "$prelude" "admin_user=ops"
+  assert_contains "phase prelude carries swap size" "$prelude" "swap_size=8G"
+  assert_contains "phase prelude carries CLI choice" "$prelude" "install_agent_clis=1"
+  assert_contains "phase prelude carries update choice" "$prelude" "automatic_updates=1"
+}
+
+test_configuration_has_no_hidden_operator_defaults
+test_guided_dry_run_captures_operator_configuration
+test_fallback_key_and_no_swap_are_captured
+test_root_and_restricted_detected_keys_are_rejected
+test_tailnet_confirmation_controls_hardening
+test_legacy_ssh_orchestration_is_removed
+test_checkout_free_installer_downloads_and_runs_bundle
+test_checkout_free_installer_executes_downloaded_bundle
+test_generated_server_phase_keeps_security_controls
+test_server_config_prelude_carries_every_choice
 
 if [[ "$failures" -gt 0 ]]; then
   printf '\n%s test(s) failed\n' "$failures" >&2
   exit 1
 fi
 
-printf '\nall tests passed\n'
+printf '\nall guided on-VPS tests passed\n'

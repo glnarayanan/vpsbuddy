@@ -3,24 +3,18 @@
 VPS_BOOTSTRAP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 reset_config() {
-  VPS_HOST=""
-  VPS_LOGIN_USER=""
-  VPS_ADMIN_USER="deploy"
-  VPS_PUBKEY="${HOME}/.ssh/id_ed25519.pub"
-  VPS_IDENTITY=""
-  VPS_LOGIN_IDENTITY=""
-  VPS_INITIAL_SSH_OPTIONS=()
+  VPS_ADMIN_USER=""
+  VPS_PUBLIC_KEY=""
   VPS_HOSTNAME=""
-  VPS_ENABLE_TAILSCALE_SSH="0"
-  VPS_INSTALL_AGENT_CLIS="0"
-  VPS_AGENT_CLIS_PROMPT="1"
-  VPS_FULL_SUDO="0"
-  VPS_SWAP_ENABLED="1"
-  VPS_SWAP_SIZE="2G"
-  VPS_WEB="1"
+  VPS_SWAP_ENABLED=""
+  VPS_SWAP_SIZE=""
+  VPS_SWAP_ACTION=""
+  VPS_WEB=""
+  VPS_INSTALL_AGENT_CLIS=""
+  VPS_AUTOMATIC_UPDATES=""
+  VPS_FULL_SUDO=""
+  VPS_ENABLE_TAILSCALE_SSH=""
   VPS_DRY_RUN="0"
-  VPS_DOCTOR="0"
-  VPS_DOCTOR_FAILURES="0"
   VPS_SHOW_HELP="0"
 }
 
@@ -33,77 +27,122 @@ error() {
 usage() {
   cat << 'USAGE'
 Usage:
-  vps-bootstrap --host <ip-or-hostname> [options]
-  vps-bootstrap doctor [options]
+  sudo vps-bootstrap [--dry-run]
+
+Run this command after logging into the VPS. The guided setup asks for:
+  - the admin user name
+  - the SSH public key to install
+  - an optional hostname
+  - swap setup
+  - public web ports
+  - Codex, Grok, and GitHub CLI installation
+  - automatic OS updates
+  - scoped or full passwordless sudo
+  - optional Tailscale SSH
 
 Options:
-  --host <host>                 Public VPS address for the initial SSH login.
-  --login-user <name>           Provider's initial SSH user. Required for bootstrap and dry-run.
-  --login-identity <path>       Private key for the initial SSH login. Optional; use SSH agent/config otherwise.
-  --user <name>                 Admin sudo user to create. Default: deploy.
-  --pubkey <path>               Public key to install. Default: ~/.ssh/id_ed25519.pub.
-  --identity <path>             Private key used to verify Tailnet login. Default: pubkey without .pub.
-  --hostname <name>             Hostname to set on the server and use for Tailscale.
-  --enable-tailscale-ssh        Enable Tailscale SSH after joining the Tailnet.
-  --install-agent-clis          Install Codex, Grok, and GitHub CLIs without asking.
-  --skip-agent-clis             Skip Codex, Grok, and GitHub CLI installation without asking.
-  --full-sudo                   Use NOPASSWD:ALL instead of scoped passwordless sudo.
-  --swap-size <size>            Create this swap size when no active swap exists. Default: 2G.
-  --no-swap                     Do not create or enable swap during prepare.
-  --web                         Keep public TCP 80/443 open. Default.
-  --web=false                   Disable public TCP 80/443.
-  --no-web                      Disable public TCP 80/443.
-  --dry-run                     Print the phased plan without opening SSH connections.
-  -h, --help                    Show this help.
+  --dry-run   Collect and print the configuration without changing the server.
+  -h, --help  Show this help.
 
-The tool uses --login-user for the first public SSH connection. Pass
---login-identity when the provider requires a key that is not already available
-through your SSH agent or config. Before that first connection, paste the
-provider SSH host key if available, or press Enter to scan the live host key and
-confirm its fingerprint before pinning it.
-
-If neither agent CLI flag is passed, an interactive bootstrap asks whether to
-install Codex, Grok, and GitHub CLI before opening the first SSH connection.
-Use an explicit flag for unattended runs.
-
-The doctor command performs local/read-only checks only. Run it from your
-workstation before bootstrap or on a bootstrapped VPS after setup.
+The prepare phase keeps public SSH open. After it completes, test the new admin
+login over the Tailnet from another terminal. The script only disables public
+SSH after you type yes to confirm that test passed.
 USAGE
 }
 
-parse_bool() {
-  local value lowered
-  value="$1"
-  lowered="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
-
-  case "$lowered" in
-    1 | true | yes | y | on)
-      printf '1'
-      ;;
-    0 | false | no | n | off)
-      printf '0'
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+parse_args() {
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --dry-run)
+        VPS_DRY_RUN="1"
+        ;;
+      -h | --help)
+        VPS_SHOW_HELP="1"
+        ;;
+      *)
+        error "unknown option: $1"
+        return 1
+        ;;
+    esac
+    shift
+  done
 }
 
-require_option_value() {
-  local option="$1"
-  local value="${2-}"
+read_interactive_answer() {
+  local answer
 
-  if [[ -z "$value" || "$value" == --* ]]; then
-    error "$option requires a value"
+  if [[ -n "${VPS_INPUT_FD:-}" ]]; then
+    IFS= read -r -u "$VPS_INPUT_FD" answer || return 1
+    printf '%s' "$answer"
+    return
+  fi
+
+  if [[ ! -r /dev/tty ]]; then
+    error "interactive input requires a terminal"
     return 1
   fi
+
+  IFS= read -r answer < /dev/tty || return 1
+  printf '%s' "$answer"
+}
+
+prompt_required() {
+  local prompt="$1"
+  local answer
+
+  while true; do
+    printf '[vps-bootstrap] %s: ' "$prompt" >&2
+    answer="$(read_interactive_answer)" || return 1
+    if [[ -n "$answer" ]]; then
+      printf '%s' "$answer"
+      return 0
+    fi
+    error "a value is required"
+  done
+}
+
+prompt_optional() {
+  local prompt="$1"
+  local answer
+
+  printf '[vps-bootstrap] %s: ' "$prompt" >&2
+  answer="$(read_interactive_answer)" || return 1
+  printf '%s' "$answer"
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local answer
+
+  while true; do
+    printf '[vps-bootstrap] %s (yes/no): ' "$prompt" >&2
+    answer="$(read_interactive_answer)" || return 1
+    case "$answer" in
+      yes | YES | Yes | y | Y)
+        printf '1'
+        return 0
+        ;;
+      no | NO | No | n | N)
+        printf '0'
+        return 0
+        ;;
+      *)
+        error "answer yes or no"
+        ;;
+    esac
+  done
 }
 
 validate_admin_user() {
   local user="$1"
 
+  if [[ "$user" == "root" ]]; then
+    error "root cannot be the managed admin user"
+    return 1
+  fi
+
   if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
-    error "user must match ^[a-z_][a-z0-9_-]{0,31}$"
+    error "admin user must match ^[a-z_][a-z0-9_-]{0,31}$"
     return 1
   fi
 }
@@ -111,11 +150,7 @@ validate_admin_user() {
 validate_hostname() {
   local hostname="$1"
 
-  if [[ -z "$hostname" ]]; then
-    return 0
-  fi
-
-  if [[ ! "$hostname" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,251}[A-Za-z0-9]$ ]]; then
+  if [[ -n "$hostname" && ! "$hostname" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]]; then
     error "hostname must contain only letters, numbers, dots, and hyphens"
     return 1
   fi
@@ -125,521 +160,193 @@ validate_swap_size() {
   local size="$1"
 
   if [[ ! "$size" =~ ^[1-9][0-9]*[MmGg]$ ]]; then
-    error "swap size must be a positive whole number followed by M or G, for example 2G"
+    error "swap size must be a positive whole number followed by M or G, for example 4G"
     return 1
   fi
 }
 
-detect_identity_path() {
-  local pubkey_path="$1"
+validate_public_key() {
+  local public_key="$1"
+  local key_file status
 
-  case "$pubkey_path" in
-    *.pub)
-      printf '%s' "${pubkey_path%.pub}"
+  case "$public_key" in
+    ssh-ed25519\ * | ssh-rsa\ * | ecdsa-sha2-nistp256\ * | ecdsa-sha2-nistp384\ * | ecdsa-sha2-nistp521\ * | sk-ssh-ed25519@openssh.com\ * | sk-ecdsa-sha2-nistp256@openssh.com\ *)
       ;;
     *)
-      printf '%s' "$pubkey_path"
+      error "enter one OpenSSH public key"
+      return 1
       ;;
   esac
-}
 
-parse_args() {
-  local parsed_bool
-
-  if [[ "${1-}" == "doctor" ]]; then
-    VPS_DOCTOR="1"
-    shift
-  fi
-
-  while [[ "$#" -gt 0 ]]; do
-    case "$1" in
-      --host)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_HOST="$2"
-        shift 2
-        ;;
-      --host=*)
-        VPS_HOST="${1#*=}"
-        shift
-        ;;
-      --login-user)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_LOGIN_USER="$2"
-        shift 2
-        ;;
-      --login-user=*)
-        VPS_LOGIN_USER="${1#*=}"
-        shift
-        ;;
-      --login-identity)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_LOGIN_IDENTITY="$2"
-        shift 2
-        ;;
-      --login-identity=*)
-        VPS_LOGIN_IDENTITY="${1#*=}"
-        shift
-        ;;
-      --user)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_ADMIN_USER="$2"
-        shift 2
-        ;;
-      --user=*)
-        VPS_ADMIN_USER="${1#*=}"
-        shift
-        ;;
-      --pubkey)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_PUBKEY="$2"
-        shift 2
-        ;;
-      --pubkey=*)
-        VPS_PUBKEY="${1#*=}"
-        shift
-        ;;
-      --identity)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_IDENTITY="$2"
-        shift 2
-        ;;
-      --identity=*)
-        VPS_IDENTITY="${1#*=}"
-        shift
-        ;;
-      --hostname)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_HOSTNAME="$2"
-        shift 2
-        ;;
-      --hostname=*)
-        VPS_HOSTNAME="${1#*=}"
-        shift
-        ;;
-      --enable-tailscale-ssh)
-        VPS_ENABLE_TAILSCALE_SSH="1"
-        shift
-        ;;
-      --install-agent-clis)
-        VPS_INSTALL_AGENT_CLIS="1"
-        VPS_AGENT_CLIS_PROMPT="0"
-        shift
-        ;;
-      --skip-agent-clis | --no-agent-clis)
-        VPS_INSTALL_AGENT_CLIS="0"
-        VPS_AGENT_CLIS_PROMPT="0"
-        shift
-        ;;
-      --full-sudo)
-        VPS_FULL_SUDO="1"
-        shift
-        ;;
-      --swap-size)
-        require_option_value "$1" "${2-}" || return 1
-        VPS_SWAP_SIZE="$2"
-        shift 2
-        ;;
-      --swap-size=*)
-        VPS_SWAP_SIZE="${1#*=}"
-        shift
-        ;;
-      --no-swap)
-        VPS_SWAP_ENABLED="0"
-        shift
-        ;;
-      --web)
-        VPS_WEB="1"
-        shift
-        ;;
-      --web=*)
-        parsed_bool="$(parse_bool "${1#*=}")" || {
-          error "--web expects true or false"
-          return 1
-        }
-        VPS_WEB="$parsed_bool"
-        shift
-        ;;
-      --no-web)
-        VPS_WEB="0"
-        shift
-        ;;
-      --dry-run)
-        VPS_DRY_RUN="1"
-        shift
-        ;;
-      -h | --help)
-        VPS_SHOW_HELP="1"
-        shift
-        ;;
-      *)
-        error "unknown option: $1"
-        return 1
-        ;;
-    esac
-  done
-
-  if [[ "$VPS_SHOW_HELP" == "1" ]]; then
+  if ! command -v ssh-keygen > /dev/null 2>&1; then
     return 0
   fi
 
-  if [[ -z "$VPS_HOST" && "$VPS_DOCTOR" != "1" ]]; then
-    error "--host is required"
-    return 1
+  key_file="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-key.XXXXXX")" || return 1
+  chmod 600 "$key_file"
+  printf '%s\n' "$public_key" > "$key_file"
+  if ssh-keygen -l -f "$key_file" > /dev/null 2>&1; then
+    status=0
+  else
+    error "SSH public key is not valid"
+    status=1
   fi
-
-  if [[ -z "$VPS_LOGIN_USER" && "$VPS_DOCTOR" != "1" ]]; then
-    error "--login-user is required; pass the provider image SSH user"
-    return 1
-  fi
-
-  if [[ -n "$VPS_HOST" && "$VPS_HOST" == *@* ]]; then
-    error "--host expects a hostname or IP only; pass the SSH username with --login-user"
-    return 1
-  fi
-
-  if [[ -n "$VPS_LOGIN_USER" ]]; then
-    validate_admin_user "$VPS_LOGIN_USER" || return 1
-  fi
-  validate_admin_user "$VPS_ADMIN_USER" || return 1
-  validate_hostname "$VPS_HOSTNAME" || return 1
-  validate_swap_size "$VPS_SWAP_SIZE" || return 1
-
-  if [[ -z "$VPS_IDENTITY" ]]; then
-    VPS_IDENTITY="$(detect_identity_path "$VPS_PUBKEY")"
-  fi
+  rm -f "$key_file"
+  return "$status"
 }
 
-read_public_key() {
-  local pubkey_path="$1"
-  local line
+public_key_fingerprint() {
+  local public_key="$1"
+  local key_file fingerprint
 
-  if [[ ! -r "$pubkey_path" ]]; then
-    error "public key is not readable: $pubkey_path"
-    return 1
+  if ! command -v ssh-keygen > /dev/null 2>&1; then
+    printf 'configured'
+    return 0
   fi
 
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    case "$line" in
-      '' | \#*)
-        continue
-        ;;
-      ssh-* | ecdsa-* | sk-*)
-        printf '%s' "$line"
+  key_file="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-key.XXXXXX")" || return 1
+  chmod 600 "$key_file"
+  printf '%s\n' "$public_key" > "$key_file"
+  fingerprint="$(ssh-keygen -l -f "$key_file" 2> /dev/null | awk '{ print $2 }')"
+  rm -f "$key_file"
+  printf '%s' "${fingerprint:-configured}"
+}
+
+login_home() {
+  local login_user="${SUDO_USER:-$(id -un)}"
+
+  getent passwd "$login_user" 2> /dev/null | cut -d: -f6
+}
+
+detect_existing_public_key() {
+  local home_dir authorized_keys
+
+  home_dir="$(login_home)"
+  [[ -n "$home_dir" ]] || return 1
+  authorized_keys="$home_dir/.ssh/authorized_keys"
+  [[ -r "$authorized_keys" ]] || return 1
+
+  awk '
+    $1 ~ /^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com)$/ && NF >= 2 {
+      print $1 " " $2
+      exit
+    }
+  ' "$authorized_keys"
+}
+
+has_active_swap() {
+  [[ -r /proc/swaps ]] || return 1
+  awk 'NR > 1 && $1 != "" { found = 1 } END { exit(found ? 0 : 1) }' /proc/swaps
+}
+
+collect_public_key() {
+  local detected_key use_detected_key entered_key
+
+  detected_key="$(detect_existing_public_key || true)"
+  if [[ -n "$detected_key" ]] && validate_public_key "$detected_key"; then
+    printf '[vps-bootstrap] Found the SSH key used by the current login: %s\n' \
+      "$(public_key_fingerprint "$detected_key")" >&2
+    use_detected_key="$(prompt_yes_no "Install this key for the new admin user")" || return 1
+    if [[ "$use_detected_key" == "1" ]]; then
+      VPS_PUBLIC_KEY="$detected_key"
+      return 0
+    fi
+  fi
+
+  while true; do
+    entered_key="$(prompt_required "Paste the SSH public key to install")" || return 1
+    if validate_public_key "$entered_key"; then
+      VPS_PUBLIC_KEY="$entered_key"
+      return 0
+    fi
+  done
+}
+
+collect_swap_configuration() {
+  local answer
+
+  if has_active_swap; then
+    VPS_SWAP_ENABLED="0"
+    VPS_SWAP_SIZE=""
+    VPS_SWAP_ACTION="keep existing"
+    printf '[vps-bootstrap] Active swap exists and will be left unchanged.\n' >&2
+    return 0
+  fi
+
+  while true; do
+    answer="$(prompt_required "Swap size such as 4G, or none to leave swap disabled")" || return 1
+    case "$answer" in
+      none | NONE | None)
+        VPS_SWAP_ENABLED="0"
+        VPS_SWAP_SIZE=""
+        VPS_SWAP_ACTION="leave disabled"
         return 0
         ;;
       *)
-        error "public key does not look like an OpenSSH public key: $pubkey_path"
-        return 1
+        if validate_swap_size "$answer"; then
+          VPS_SWAP_ENABLED="1"
+          VPS_SWAP_SIZE="$answer"
+          VPS_SWAP_ACTION="create $answer"
+          return 0
+        fi
         ;;
     esac
-  done < "$pubkey_path"
-
-  error "public key file is empty: $pubkey_path"
-  return 1
+  done
 }
 
-validate_local_files() {
-  read_public_key "$VPS_PUBKEY" > /dev/null || return 1
+collect_configuration() {
+  while true; do
+    VPS_ADMIN_USER="$(prompt_required "Admin user name")" || return 1
+    validate_admin_user "$VPS_ADMIN_USER" && break
+  done
 
-  if [[ ! -r "$VPS_IDENTITY" ]]; then
-    error "identity file is not readable: $VPS_IDENTITY"
-    error "pass --identity if the private key is not ${VPS_PUBKEY%.pub}"
+  collect_public_key || return 1
+
+  while true; do
+    VPS_HOSTNAME="$(prompt_optional "Hostname, or press Enter to keep the current hostname")" || return 1
+    validate_hostname "$VPS_HOSTNAME" && break
+  done
+
+  collect_swap_configuration || return 1
+  VPS_WEB="$(prompt_yes_no "Open public web ports 80 and 443")" || return 1
+  VPS_INSTALL_AGENT_CLIS="$(prompt_yes_no "Install Codex, Grok, and GitHub CLIs")" || return 1
+  VPS_AUTOMATIC_UPDATES="$(prompt_yes_no "Manage automatic OS updates with vps-bootstrap")" || return 1
+  VPS_FULL_SUDO="$(prompt_yes_no "Grant the admin user full passwordless sudo")" || return 1
+  VPS_ENABLE_TAILSCALE_SSH="$(
+    prompt_yes_no "Enable Tailscale SSH (only if Tailnet SSH ACL rules are ready)"
+  )" || return 1
+}
+
+configuration_summary() {
+  cat << SUMMARY
+
+Configuration:
+  Admin user: $VPS_ADMIN_USER
+  SSH public key: $(public_key_fingerprint "$VPS_PUBLIC_KEY")
+  Hostname: $([[ -n "$VPS_HOSTNAME" ]] && printf '%s' "$VPS_HOSTNAME" || printf 'keep current')
+  Swap: $VPS_SWAP_ACTION
+  Public web ports: $([[ "$VPS_WEB" == "1" ]] && printf 'open 80/443' || printf 'closed')
+  Developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')
+  Automatic OS updates: $([[ "$VPS_AUTOMATIC_UPDATES" == "1" ]] && printf 'enable' || printf 'disable bootstrap timer')
+  Sudo policy: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless sudo' || printf 'scoped helpers')
+  Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'enabled' || printf 'disabled')
+SUMMARY
+}
+
+require_vps_root() {
+  if [[ "$(id -u)" -ne 0 ]]; then
+    error "run this command as root, for example: sudo vps-bootstrap"
     return 1
   fi
 
-  if [[ -n "$VPS_LOGIN_IDENTITY" && ! -r "$VPS_LOGIN_IDENTITY" ]]; then
-    error "login identity file is not readable: $VPS_LOGIN_IDENTITY"
+  if [[ ! -r /etc/os-release ]]; then
+    error "/etc/os-release is missing; this does not look like a supported Linux VPS"
     return 1
   fi
 }
 
-shell_quote() {
-  printf '%q' "$1"
-}
-
-read_interactive_answer() {
-  local answer
-
-  if [[ ! -r /dev/tty ]]; then
-    error "an interactive terminal is required for this prompt; public SSH remains available"
-    return 1
-  fi
-
-  if ! IFS= read -r answer < /dev/tty; then
-    error "could not read the terminal response; public SSH remains available"
-    return 1
-  fi
-
-  printf '%s' "$answer"
-}
-
-confirm_agent_cli_install() {
-  local answer
-
-  if [[ "$VPS_AGENT_CLIS_PROMPT" != "1" ]]; then
-    return 0
-  fi
-
-  cat >&2 << 'PROMPT'
-[vps-bootstrap] Optional developer CLIs: Codex, Grok, and GitHub CLI.
-[vps-bootstrap] Install them for the admin user, plus vps-agent-auth and the CLI update timer?
-[vps-bootstrap] Type yes to install, or no to skip:
-PROMPT
-  answer="$(read_interactive_answer)" || return 1
-  case "$answer" in
-    yes | YES | Yes | y | Y)
-      VPS_INSTALL_AGENT_CLIS="1"
-      ;;
-    '' | no | NO | No | n | N)
-      VPS_INSTALL_AGENT_CLIS="0"
-      ;;
-    *)
-      error "answer yes or no; no remote changes have been made"
-      return 1
-      ;;
-  esac
-
-  VPS_AGENT_CLIS_PROMPT="0"
-}
-
-agent_cli_plan_label() {
-  if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
-    printf 'install'
-  elif [[ "$VPS_AGENT_CLIS_PROMPT" == "1" ]]; then
-    printf 'ask during interactive bootstrap'
-  else
-    printf 'skip'
-  fi
-}
-
-set_initial_ssh_options() {
-  local known_hosts_file="$1"
-
-  VPS_INITIAL_SSH_OPTIONS=(
-    -o "UserKnownHostsFile=$known_hosts_file"
-    -o HostKeyAlias=vps-bootstrap-target
-    -o StrictHostKeyChecking=yes
-  )
-
-  if [[ -n "$VPS_LOGIN_IDENTITY" ]]; then
-    VPS_INITIAL_SSH_OPTIONS+=(-i "$VPS_LOGIN_IDENTITY" -o IdentitiesOnly=yes)
-  fi
-}
-
-generate_sshd_hardening_config() {
-  cat << 'SSHD_CONFIG'
-# Managed by vps-bootstrap. Do not edit directly.
-PubkeyAuthentication yes
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-ChallengeResponseAuthentication no
-PermitRootLogin no
-PermitEmptyPasswords no
-MaxAuthTries 3
-X11Forwarding no
-SSHD_CONFIG
-}
-
-generate_sudoers_policy() {
-  local admin_user="$1"
-  local full_sudo="$2"
-
-  if [[ "$full_sudo" == "1" ]]; then
-    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$admin_user"
-    return 0
-  fi
-
-  cat << SUDOERS_POLICY
-# Managed by vps-bootstrap. Passwordless sudo is limited to root-owned helpers.
-Cmnd_Alias VPS_AGENT_HELPERS = /usr/local/sbin/vps-agent-sudo-check, /usr/local/sbin/vps-agent-package, /usr/local/sbin/vps-agent-service, /usr/local/sbin/vps-agent-logs, /usr/local/sbin/vps-agent-firewall, /usr/local/sbin/vps-agent-deploy, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
-$admin_user ALL=(root) NOPASSWD: VPS_AGENT_HELPERS
-SUDOERS_POLICY
-}
-
-validate_host_public_key_line() {
-  local key_line="$1"
-
-  case "$key_line" in
-    ssh-*' '* | ecdsa-*' '* | sk-*' '*)
-      return 0
-      ;;
-    *)
-      error "host public key must be one OpenSSH public key line, for example: ssh-ed25519 AAAA..."
-      return 1
-      ;;
-  esac
-}
-
-extract_keyscan_public_key() {
-  awk '
-    $1 !~ /^#/ && $2 ~ /^(ssh-|ecdsa-|sk-)/ {
-      $1 = ""
-      sub(/^ /, "")
-      print
-      exit
-    }
-  '
-}
-
-host_public_key_fingerprint() {
-  local key_line="$1"
-
-  printf '%s\n' "$key_line" | ssh-keygen -lf - 2> /dev/null
-}
-
-scan_host_public_key() {
-  local keyscan_output key_line
-
-  if ! command -v ssh-keyscan > /dev/null 2>&1; then
-    error "ssh-keyscan is required when the provider does not publish the SSH host key"
-    return 1
-  fi
-
-  keyscan_output="$(ssh-keyscan -T 10 "$VPS_HOST" 2> /dev/null)" || {
-    error "could not scan SSH host key from $VPS_HOST"
-    return 1
-  }
-  key_line="$(printf '%s\n' "$keyscan_output" | extract_keyscan_public_key)"
-  if [[ -z "$key_line" ]]; then
-    error "could not find an OpenSSH host key in ssh-keyscan output for $VPS_HOST"
-    return 1
-  fi
-
-  validate_host_public_key_line "$key_line" || return 1
-  printf '%s\n' "$key_line"
-}
-
-confirm_scanned_host_public_key() {
-  local key_line="$1"
-  local fingerprint answer
-
-  fingerprint="$(host_public_key_fingerprint "$key_line")" || {
-    error "could not calculate scanned SSH host key fingerprint"
-    return 1
-  }
-
-  cat >&2 << PROMPT
-[vps-bootstrap] Scanned SSH host key from $VPS_HOST:
-[vps-bootstrap]   $key_line
-[vps-bootstrap] Fingerprint:
-[vps-bootstrap]   $fingerprint
-[vps-bootstrap] If this is a fresh VPS and your provider does not expose a host key, type yes to trust and pin this key for bootstrap:
-PROMPT
-  answer="$(read_interactive_answer)" || return 1
-  case "$answer" in
-    yes | YES | Yes)
-      return 0
-      ;;
-    *)
-      error "SSH host key was not trusted; bootstrap stopped before connecting"
-      return 1
-      ;;
-  esac
-}
-
-prompt_host_public_key() {
-  local key_line
-  local scanned_key
-
-  cat >&2 << PROMPT
-[vps-bootstrap] If your provider shows the VPS SSH host public key, paste it here.
-[vps-bootstrap] If not, press Enter to scan the live SSH host key and confirm its fingerprint.
-[vps-bootstrap] This is the server host key, not your user login key.
-[vps-bootstrap] Example: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
-Host public key, or Enter to scan:
-PROMPT
-  key_line="$(read_interactive_answer)" || return 1
-  if [[ -z "$key_line" ]]; then
-    scanned_key="$(scan_host_public_key)" || return 1
-    confirm_scanned_host_public_key "$scanned_key" || return 1
-    printf '%s\n' "$scanned_key"
-    return 0
-  fi
-
-  validate_host_public_key_line "$key_line" || return 1
-  printf '%s\n' "$key_line"
-}
-
-write_known_hosts_file() {
-  local key_line="$1"
-  local output="$2"
-
-  validate_host_public_key_line "$key_line" || return 1
-  umask 077
-  printf 'vps-bootstrap-target %s\n' "$key_line" > "$output"
-}
-
-generate_ufw_rules() {
-  local phase="$1"
-  local web_enabled="$2"
-
-  cat << 'UFW_RULES'
-ufw default deny incoming
-ufw default allow outgoing
-ufw allow in on tailscale0 to any port 22 proto tcp comment 'vps-bootstrap tailnet ssh'
-UFW_RULES
-
-  if [[ "$phase" == "prepare" ]]; then
-    cat << 'UFW_PREPARE'
-ufw allow 22/tcp comment 'vps-bootstrap temporary public ssh'
-UFW_PREPARE
-  else
-    cat << 'UFW_HARDEN'
-ufw --force delete allow 22/tcp || true
-ufw --force delete allow OpenSSH || true
-ufw --force delete allow ssh || true
-UFW_HARDEN
-  fi
-
-  if [[ "$web_enabled" == "1" ]]; then
-    cat << 'UFW_WEB'
-ufw allow 80/tcp comment 'vps-bootstrap public http'
-ufw allow 443/tcp comment 'vps-bootstrap public https'
-UFW_WEB
-  else
-    cat << 'UFW_NO_WEB'
-ufw --force delete allow 80/tcp || true
-ufw --force delete allow 443/tcp || true
-UFW_NO_WEB
-  fi
-
-  printf 'ufw --force enable\n'
-}
-
-generate_firewalld_rules() {
-  local phase="$1"
-  local web_enabled="$2"
-
-  cat << 'FIREWALLD_RULES'
-firewall-cmd --permanent --new-zone=tailnet || true
-firewall-cmd --permanent --zone=tailnet --change-interface=tailscale0
-firewall-cmd --permanent --zone=tailnet --add-service=ssh
-firewall-cmd --set-default-zone=public
-FIREWALLD_RULES
-
-  if [[ "$phase" == "prepare" ]]; then
-    printf 'firewall-cmd --permanent --zone=public --add-service=ssh\n'
-  else
-    printf 'firewall-cmd --permanent --zone=public --remove-service=ssh || true\n'
-  fi
-
-  if [[ "$web_enabled" == "1" ]]; then
-    cat << 'FIREWALLD_WEB'
-firewall-cmd --permanent --zone=public --add-service=http
-firewall-cmd --permanent --zone=public --add-service=https
-FIREWALLD_WEB
-  else
-    cat << 'FIREWALLD_NO_WEB'
-firewall-cmd --permanent --zone=public --remove-service=http || true
-firewall-cmd --permanent --zone=public --remove-service=https || true
-FIREWALLD_NO_WEB
-  fi
-
-  printf 'firewall-cmd --reload\n'
-}
-
-generate_remote_script() {
-  cat << 'REMOTE_SCRIPT_HEAD'
+generate_server_script() {
+  cat << 'SERVER_SCRIPT_HEAD'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -647,12 +354,13 @@ set -Eeuo pipefail
 : "${admin_user:?admin user required}"
 : "${public_key:?public key required}"
 requested_hostname="${requested_hostname:-}"
-enable_tailscale_ssh="${enable_tailscale_ssh:-0}"
-web_enabled="${web_enabled:-1}"
-install_agent_clis="${install_agent_clis:-0}"
-full_sudo="${full_sudo:-0}"
-swap_enabled="${swap_enabled:-1}"
-swap_size="${swap_size:-2G}"
+: "${enable_tailscale_ssh:?Tailscale SSH choice required}"
+: "${web_enabled:?web port choice required}"
+: "${install_agent_clis:?developer CLI choice required}"
+: "${automatic_updates:?automatic update choice required}"
+: "${full_sudo:?sudo policy choice required}"
+: "${swap_enabled:?swap choice required}"
+swap_size="${swap_size:-}"
 
 OS_ID=""
 OS_LIKE=""
@@ -683,27 +391,38 @@ command_exists() {
 
 require_root() {
   if [[ "$(id -u)" -ne 0 ]]; then
-    fail "remote script must run as root"
+    fail "vps-bootstrap must run as root"
   fi
 }
 
-validate_admin_user_remote() {
+validate_admin_user_server() {
+  local existing_uid
+
+  if [[ "$admin_user" == "root" ]]; then
+    fail "root cannot be the managed admin user"
+  fi
+
   if [[ ! "$admin_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
     fail "admin user must match ^[a-z_][a-z0-9_-]{0,31}$"
   fi
+
+  existing_uid="$(id -u "$admin_user" 2>/dev/null || true)"
+  if [[ "$existing_uid" == "0" ]]; then
+    fail "managed admin user must not have UID 0"
+  fi
 }
 
-validate_hostname_remote() {
+validate_hostname_server() {
   if [[ -z "$requested_hostname" ]]; then
     return 0
   fi
 
-  if [[ ! "$requested_hostname" =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,251}[A-Za-z0-9]$ ]]; then
+  if [[ ! "$requested_hostname" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]]; then
     fail "hostname must contain only letters, numbers, dots, and hyphens"
   fi
 }
 
-validate_swap_size_remote() {
+validate_swap_size_server() {
   if [[ ! "$swap_size" =~ ^[1-9][0-9]*[MmGg]$ ]]; then
     fail "swap size must be a positive whole number followed by M or G, for example 2G"
   fi
@@ -799,20 +518,21 @@ install_required_packages() {
   if [[ "$PKG_BACKEND" == "apt" ]]; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y sudo ca-certificates curl gnupg git openssh-server ufw unattended-upgrades util-linux
+    apt-get install -y sudo ca-certificates curl gnupg git openssh-server ufw util-linux
+    if [[ "$automatic_updates" == "1" ]]; then
+      apt-get install -y unattended-upgrades
+    fi
     return 0
   fi
 
   if [[ "$PKG_BACKEND" == "dnf" ]]; then
     dnf makecache -y
     dnf install -y sudo ca-certificates curl git openssh-server firewalld util-linux
-    install_optional_package dnf-automatic || true
     return 0
   fi
 
   yum makecache -y
   yum install -y sudo ca-certificates curl git openssh-server firewalld util-linux
-  install_optional_package dnf-automatic || true
 }
 
 has_active_swap() {
@@ -834,7 +554,7 @@ install_swap() {
     return 0
   fi
 
-  validate_swap_size_remote
+  validate_swap_size_server
   command_exists mkswap || fail "mkswap is required for swap setup"
   command_exists swapon || fail "swapon is required for swap setup"
   [[ -r /proc/swaps ]] || fail "/proc/swaps is unavailable; cannot verify swap state"
@@ -909,24 +629,45 @@ enable_service() {
   return 1
 }
 
+remove_legacy_auto_updates_config() {
+  local legacy_file legacy_contents expected_contents
+
+  legacy_file="/etc/apt/apt.conf.d/20auto-upgrades"
+  [[ -f "$legacy_file" ]] || return 0
+
+  legacy_contents="$(cat "$legacy_file")"
+  expected_contents=$'APT::Periodic::Update-Package-Lists "14";\nAPT::Periodic::Unattended-Upgrade "14";\nAPT::Periodic::AutocleanInterval "14";'
+  if [[ "$legacy_contents" == "$expected_contents" ]]; then
+    rm -f "$legacy_file"
+    log "removed the legacy vps-bootstrap apt update schedule"
+  fi
+}
+
 configure_automatic_updates() {
   if [[ "$PKG_BACKEND" == "apt" ]]; then
-    if command_exists dpkg-reconfigure; then
-      printf 'unattended-upgrades unattended-upgrades/enable_auto_updates boolean true\n' | debconf-set-selections || true
-      dpkg-reconfigure -f noninteractive unattended-upgrades || true
-    fi
+    remove_legacy_auto_updates_config
+  fi
 
-    cat >/etc/apt/apt.conf.d/20auto-upgrades <<'APT_AUTO_UPGRADES'
+  if [[ "$automatic_updates" != "1" ]]; then
+    systemctl disable --now vps-os-update.timer >/dev/null 2>&1 || true
+    rm -f \
+      /etc/systemd/system/vps-os-update.service \
+      /etc/systemd/system/vps-os-update.timer \
+      /etc/apt/apt.conf.d/52vps-bootstrap-auto-upgrades \
+      /usr/local/sbin/vps-os-update
+    systemctl daemon-reload
+    log "vps-bootstrap automatic OS updates disabled"
+    return 0
+  fi
+
+  if [[ "$PKG_BACKEND" == "apt" ]]; then
+    cat >/etc/apt/apt.conf.d/52vps-bootstrap-auto-upgrades <<'APT_AUTO_UPGRADES'
 APT::Periodic::Update-Package-Lists "14";
 APT::Periodic::Unattended-Upgrade "14";
 APT::Periodic::AutocleanInterval "14";
 APT_AUTO_UPGRADES
 
     systemctl enable --now unattended-upgrades >/dev/null 2>&1 || warn "unattended-upgrades service not enabled"
-  elif command_exists dnf-automatic; then
-    log "dnf-automatic is installed; vps-os-update.timer controls the two-week update cadence"
-  else
-    warn "dnf-automatic is unavailable; vps-os-update.timer will still run package-manager updates"
   fi
 
   install_os_update_timer
@@ -1016,13 +757,13 @@ install_ban_service() {
 
 agent_audit_prelude() {
   cat <<'AGENT_AUDIT_PRELUDE'
-REMOTE_SCRIPT_HEAD
+SERVER_SCRIPT_HEAD
   cat "$VPS_BOOTSTRAP_LIB_DIR/templates/vps-agent-audit-prelude.sh"
-  cat << 'REMOTE_SCRIPT_BODY'
+  cat << 'SERVER_SCRIPT_BODY'
 AGENT_AUDIT_PRELUDE
 }
 
-generate_sudoers_policy_remote() {
+generate_sudoers_policy_server() {
   local policy_full="${1:-$full_sudo}"
 
   if [[ "$policy_full" == "1" ]]; then
@@ -1032,7 +773,7 @@ generate_sudoers_policy_remote() {
 
   cat <<SUDOERS_POLICY
 # Managed by vps-bootstrap. Passwordless sudo is limited to root-owned helpers.
-Cmnd_Alias VPS_AGENT_HELPERS = /usr/local/sbin/vps-agent-sudo-check, /usr/local/sbin/vps-agent-package, /usr/local/sbin/vps-agent-service, /usr/local/sbin/vps-agent-logs, /usr/local/sbin/vps-agent-firewall, /usr/local/sbin/vps-agent-deploy, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
+Cmnd_Alias VPS_AGENT_HELPERS = /usr/local/sbin/vps-agent-sudo-check, /usr/local/sbin/vps-agent-package, /usr/local/sbin/vps-agent-service, /usr/local/sbin/vps-agent-logs, /usr/local/sbin/vps-agent-firewall, /usr/local/sbin/vps-agent-cli-update, /usr/local/sbin/vps-os-update
 $admin_user ALL=(root) NOPASSWD: VPS_AGENT_HELPERS
 SUDOERS_POLICY
 }
@@ -1227,61 +968,13 @@ esac
 FIREWALL_HELPER_BODY
   } >/usr/local/sbin/vps-agent-firewall
 
-  {
-    cat <<'DEPLOY_HELPER_HEAD'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-DEPLOY_HELPER_HEAD
-    printf 'admin_user=%q\n' "$admin_user"
-    printf 'home_dir=%q\n' "$home_dir"
-    agent_audit_prelude
-    cat <<'DEPLOY_HELPER_BODY'
-
-usage() {
-  printf 'Usage: vps-agent-deploy <source-dir> <target-dir-under-/srv-or-/var/www>\n' >&2
-  exit 2
-}
-
-[[ "$#" -eq 2 ]] || usage
-source_dir="${1%/}"
-target_dir="${2%/}"
-
-case "$source_dir" in
-  "$home_dir"/* | /tmp/*)
-    ;;
-  *)
-    printf 'source must be under %s or /tmp\n' "$home_dir" >&2
-    exit 2
-    ;;
-esac
-
-case "$target_dir" in
-  /srv/* | /var/www/*)
-    ;;
-  *)
-    printf 'target must be under /srv or /var/www\n' >&2
-    exit 2
-    ;;
-esac
-
-[[ -d "$source_dir" ]] || {
-  printf 'source directory does not exist: %s\n' "$source_dir" >&2
-  exit 2
-}
-
-install -d -m 0755 "$target_dir"
-rsync -a --delete "$source_dir"/ "$target_dir"/
-chown -R "$admin_user:$admin_user" "$target_dir"
-DEPLOY_HELPER_BODY
-  } >/usr/local/sbin/vps-agent-deploy
-
+  rm -f /usr/local/sbin/vps-agent-deploy
   chmod 755 \
     /usr/local/sbin/vps-agent-sudo-check \
     /usr/local/sbin/vps-agent-package \
     /usr/local/sbin/vps-agent-service \
     /usr/local/sbin/vps-agent-logs \
-    /usr/local/sbin/vps-agent-firewall \
-    /usr/local/sbin/vps-agent-deploy
+    /usr/local/sbin/vps-agent-firewall
 }
 
 write_sudoers_policy() {
@@ -1289,7 +982,7 @@ write_sudoers_policy() {
   local sudoers_file
 
   sudoers_file="/etc/sudoers.d/90-vps-bootstrap-$admin_user"
-  generate_sudoers_policy_remote "$policy_full" >"$sudoers_file"
+  generate_sudoers_policy_server "$policy_full" >"$sudoers_file"
   chmod 440 "$sudoers_file"
   visudo -cf "$sudoers_file" >/dev/null
 }
@@ -1430,18 +1123,36 @@ install_github_cli() {
 }
 
 install_agent_clis_if_requested() {
+  local failures=0
+
   if [[ "$install_agent_clis" != "1" ]]; then
     log "developer CLI installation skipped"
     return 0
   fi
 
-  install_codex_cli || warn "Codex CLI installation failed; continuing with bootstrap"
-  remove_legacy_third_party_grok_cli || warn "legacy third-party Grok CLI removal failed; continuing with bootstrap"
-  install_grok_cli || warn "Grok CLI installation failed; continuing with bootstrap"
-  install_github_cli || warn "GitHub CLI installation failed; continuing with bootstrap"
+  install_codex_cli || {
+    warn "Codex CLI installation failed"
+    failures=$((failures + 1))
+  }
+  remove_legacy_third_party_grok_cli || {
+    warn "legacy third-party Grok CLI removal failed"
+    failures=$((failures + 1))
+  }
+  install_grok_cli || {
+    warn "Grok CLI installation failed"
+    failures=$((failures + 1))
+  }
+  install_github_cli || {
+    warn "GitHub CLI installation failed"
+    failures=$((failures + 1))
+  }
   install_agent_auth_helper
   install_agent_cli_update_timer
   print_agent_cli_versions
+
+  if [[ "$failures" -gt 0 ]]; then
+    fail "one or more selected developer CLIs failed to install; public SSH remains open"
+  fi
 }
 
 install_agent_cli_update_timer() {
@@ -1560,9 +1271,9 @@ install_agent_auth_helper() {
   log "installing /usr/local/bin/vps-agent-auth"
 
   cat >/usr/local/bin/vps-agent-auth <<'AGENT_AUTH_HELPER'
-REMOTE_SCRIPT_BODY
+SERVER_SCRIPT_BODY
   cat "$VPS_BOOTSTRAP_LIB_DIR/templates/vps-agent-auth.sh"
-  cat << 'REMOTE_SCRIPT_BODY'
+  cat << 'SERVER_SCRIPT_BODY'
 AGENT_AUTH_HELPER
 
   chmod 755 /usr/local/bin/vps-agent-auth
@@ -1602,9 +1313,7 @@ ensure_admin_user() {
   chown "$admin_user:$admin_user" "$home_dir/.ssh/authorized_keys"
   chmod 600 "$home_dir/.ssh/authorized_keys"
 
-  # The harden phase runs through `sudo bash -s` after local key verification.
-  # It rewrites this temporary broad policy to the requested final policy.
-  write_sudoers_policy "1"
+  write_sudoers_policy "$full_sudo"
 }
 
 set_requested_hostname() {
@@ -1657,6 +1366,12 @@ ensure_tailscale_connected() {
   fail "tailscale did not report an IPv4 address"
 }
 
+disable_tailscale_ssh_for_verification() {
+  if ! tailscale set --ssh=false; then
+    fail "could not disable Tailscale SSH before OpenSSH verification; public SSH remains open"
+  fi
+}
+
 enable_tailscale_ssh_if_requested() {
   if [[ "$enable_tailscale_ssh" != "1" ]]; then
     return 0
@@ -1664,8 +1379,7 @@ enable_tailscale_ssh_if_requested() {
 
   log "enabling Tailscale SSH on this node"
   if ! tailscale set --ssh; then
-    warn "Tailscale SSH enable failed; OpenSSH over Tailnet remains the supported access path"
-    return 0
+    fail "Tailscale SSH enable failed; OpenSSH over the Tailnet remains available"
   fi
 
   warn "Tailscale SSH also requires matching Tailnet ACL SSH rules"
@@ -1737,10 +1451,30 @@ configure_firewall() {
   configure_firewalld "$firewall_phase"
 }
 
+validate_effective_sshd_hardening() {
+  local connection_host effective_admin effective_root setting
+
+  connection_host="$(hostname)"
+  effective_admin="$(sshd -T -C "user=$admin_user,host=$connection_host,addr=127.0.0.1")" ||
+    return 1
+  effective_root="$(sshd -T -C "user=root,host=$connection_host,addr=127.0.0.1")" ||
+    return 1
+
+  for setting in \
+    "pubkeyauthentication yes" \
+    "passwordauthentication no" \
+    "kbdinteractiveauthentication no" \
+    "permitemptypasswords no"; do
+    grep -qxF "$setting" <<<"$effective_admin" || return 1
+  done
+
+  grep -qxF "permitrootlogin no" <<<"$effective_root"
+}
+
 write_sshd_hardening() {
   local snippet include_backup
 
-  snippet="/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf"
+  snippet="/etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf"
   install -d -m 755 /etc/ssh/sshd_config.d
 
   if ! grep -Eiq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
@@ -1774,6 +1508,12 @@ SSHD_CONFIG
     fail "sshd -t failed; removed hardening snippet and left current SSH policy active"
   fi
 
+  rm -f /etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf
+  if ! validate_effective_sshd_hardening; then
+    rm -f "$snippet"
+    fail "effective sshd settings did not match the hardening policy; public SSH remains open"
+  fi
+
   if ! systemctl reload "$SSHD_SERVICE"; then
     systemctl restart "$SSHD_SERVICE"
   fi
@@ -1794,8 +1534,8 @@ validate_prepare_state() {
 
 run_prepare() {
   require_root
-  validate_admin_user_remote
-  validate_hostname_remote
+  validate_admin_user_server
+  validate_hostname_server
   select_platform
   install_required_packages
   install_swap
@@ -1805,27 +1545,28 @@ run_prepare() {
   ensure_admin_user
   install_agent_sudo_helpers
   set_requested_hostname
-  install_agent_clis_if_requested
   ensure_tailscale_connected
+  disable_tailscale_ssh_for_verification
   configure_firewall prepare
   validate_prepare_state
+  install_agent_clis_if_requested
 
   printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
   printf 'VPS_BOOTSTRAP_FIREWALL=%s\n' "$FIREWALL_BACKEND"
   printf 'VPS_BOOTSTRAP_SWAP=%s\n' "$([[ "$swap_enabled" == "1" ]] && printf 'enabled' || printf 'disabled')"
-  log "prepare phase complete; public SSH remains available until local Tailnet login verification passes"
+  log "prepare phase complete; public SSH remains available until you verify the Tailnet admin login"
 }
 
 run_harden() {
   require_root
-  validate_admin_user_remote
-  validate_hostname_remote
+  validate_admin_user_server
+  validate_hostname_server
   select_platform
   ensure_tailscale_connected
   install_agent_sudo_helpers
-  configure_firewall harden
   write_sshd_hardening
   write_sudoers_policy "$full_sudo"
+  configure_firewall harden
   enable_tailscale_ssh_if_requested
 
   printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
@@ -1844,86 +1585,64 @@ case "$phase" in
     fail "unknown phase: $phase"
     ;;
 esac
-REMOTE_SCRIPT_BODY
+SERVER_SCRIPT_BODY
 }
 
-build_prepare_command() {
-  local login_user="$1"
-  local host="$2"
-  local login_identity="${3-}"
-  local login_options=""
-  local remote_runner="sudo bash"
+generate_server_config_prelude() {
+  local selected_phase="$1"
 
-  if [[ -n "$login_identity" ]]; then
-    login_options="-i $(shell_quote "$login_identity") -o IdentitiesOnly=yes "
-  fi
-
-  if [[ "$login_user" == "root" ]]; then
-    remote_runner="bash"
-  fi
-
-  printf 'paste or scan host public key -> temporary known_hosts; upload temporary script with scp; ssh -tt %s-o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
-    "$login_options" \
-    "$(shell_quote "$login_user@$host")" \
-    "$(shell_quote "$remote_runner <remote-temp-script> prepare")"
-}
-
-build_admin_verify_command() {
-  local admin_user="$1"
-  local tailnet_ip="$2"
-  local identity="$3"
-
-  printf 'ssh -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
-    "$(shell_quote "$identity")" \
-    "$(shell_quote "$admin_user@$tailnet_ip")" \
-    "'sudo -n /usr/local/sbin/vps-agent-sudo-check'"
-}
-
-build_admin_harden_command() {
-  local admin_user="$1"
-  local tailnet_ip="$2"
-  local identity="$3"
-
-  printf 'stream config + script | ssh -tt -i %s -o IdentitiesOnly=yes -o BatchMode=yes -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
-    "$(shell_quote "$identity")" \
-    "$(shell_quote "$admin_user@$tailnet_ip")" \
-    "$(shell_quote "sudo bash -s")"
-}
-
-generate_remote_config_prelude() {
-  local phase="$1"
-  local public_key="$2"
-
-  printf 'phase=%q\n' "$phase"
+  printf 'phase=%q\n' "$selected_phase"
   printf 'admin_user=%q\n' "$VPS_ADMIN_USER"
-  printf 'public_key=%q\n' "$public_key"
+  printf 'public_key=%q\n' "$VPS_PUBLIC_KEY"
   printf 'requested_hostname=%q\n' "$VPS_HOSTNAME"
   printf 'enable_tailscale_ssh=%q\n' "$VPS_ENABLE_TAILSCALE_SSH"
   printf 'web_enabled=%q\n' "$VPS_WEB"
   printf 'install_agent_clis=%q\n' "$VPS_INSTALL_AGENT_CLIS"
+  printf 'automatic_updates=%q\n' "$VPS_AUTOMATIC_UPDATES"
   printf 'full_sudo=%q\n' "$VPS_FULL_SUDO"
   printf 'swap_enabled=%q\n' "$VPS_SWAP_ENABLED"
   printf 'swap_size=%q\n' "$VPS_SWAP_SIZE"
 }
 
-parse_prepare_tailnet_ip() {
-  local output="$1"
+run_server_phase() {
+  local selected_phase="$1"
+  local phase_script status
 
-  printf '%s\n' "$output" |
-    sed -n 's/.*VPS_BOOTSTRAP_TAILSCALE_IP=//p' |
-    tail -n 1 |
-    tr -d '\r'
+  phase_script="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-${selected_phase}.XXXXXX")" || return 1
+  chmod 700 "$phase_script"
+  {
+    generate_server_config_prelude "$selected_phase"
+    generate_server_script
+  } > "$phase_script"
+
+  if bash "$phase_script"; then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "$phase_script"
+  return "$status"
 }
 
-confirm_harden_after_manual_ssh_check() {
+tailnet_ipv4() {
+  tailscale ip -4 2> /dev/null | awk 'NF { print; exit }'
+}
+
+verify_prepared_admin() {
+  sudo -H -u "$VPS_ADMIN_USER" sudo -n /usr/local/sbin/vps-agent-sudo-check
+}
+
+confirm_tailnet_login() {
   local tailnet_ip="$1"
   local answer
 
   cat >&2 << PROMPT
-[vps-bootstrap] Automated Tailnet SSH and sudo verification passed.
-[vps-bootstrap] Before public SSH is disabled, verify from another terminal:
-[vps-bootstrap]   ssh -i $(shell_quote "$VPS_IDENTITY") $(shell_quote "$VPS_ADMIN_USER@$tailnet_ip")
-[vps-bootstrap] Continue with hardening now? Type yes to disable public SSH:
+
+[vps-bootstrap] Prepare is complete. Public SSH is still open.
+[vps-bootstrap] From another terminal on a device in your Tailnet, run:
+[vps-bootstrap]   ssh $VPS_ADMIN_USER@$tailnet_ip
+[vps-bootstrap] Keep this session open until that login works.
+[vps-bootstrap] Type yes only after the Tailnet login succeeds:
 PROMPT
   answer="$(read_interactive_answer)" || return 1
   case "$answer" in
@@ -1931,465 +1650,17 @@ PROMPT
       return 0
       ;;
     *)
-      cat >&2 << SKIP
-[vps-bootstrap] Leaving public SSH available.
-[vps-bootstrap] To finish later, verify the SSH command above and rerun the same vps-bootstrap command.
-[vps-bootstrap] The next run will re-check completed setup and continue to hardening after confirmation.
-SKIP
+      cat >&2 << PAUSED
+[vps-bootstrap] Setup paused. Public SSH remains open.
+[vps-bootstrap] Rerun this installer when you are ready to verify and harden the VPS.
+PAUSED
       return 1
       ;;
   esac
 }
 
-confirm_tailscale_ssh_acl_ready() {
+print_completion_summary() {
   local tailnet_ip="$1"
-  local answer
-
-  if [[ "$VPS_ENABLE_TAILSCALE_SSH" != "1" ]]; then
-    return 0
-  fi
-
-  cat >&2 << PROMPT
-[vps-bootstrap] --enable-tailscale-ssh was requested.
-[vps-bootstrap] Tailscale SSH can block normal OpenSSH over the Tailnet unless your Tailnet ACL SSH rules permit this user and node.
-[vps-bootstrap] Keep OpenSSH as the safe access path unless you have already configured and reviewed Tailscale SSH ACLs.
-[vps-bootstrap] Enable Tailscale SSH during hardening now? Type yes to enable, or anything else to skip it:
-PROMPT
-  answer="$(read_interactive_answer)" || return 1
-  case "$answer" in
-    yes | YES | Yes)
-      return 0
-      ;;
-    *)
-      VPS_ENABLE_TAILSCALE_SSH="0"
-      cat >&2 << SKIP
-[vps-bootstrap] Skipping Tailscale SSH. Bootstrap will still finish with OpenSSH over the Tailnet.
-[vps-bootstrap] To enable it later, configure Tailnet ACL SSH rules first, then run: sudo tailscale set --ssh
-SKIP
-      return 0
-      ;;
-  esac
-}
-
-run_remote_prepare_from_file() {
-  local public_key="$1"
-  local known_hosts_file="$2"
-  local local_script remote_script remote_command remote_runner status
-
-  local_script="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-prepare.XXXXXX")" || return 1
-  remote_script="/tmp/vps-bootstrap-prepare-${VPS_LOGIN_USER}.$$.$RANDOM.sh"
-  remote_runner="sudo bash"
-  if [[ "$VPS_LOGIN_USER" == "root" ]]; then
-    remote_runner="bash"
-  fi
-  set_initial_ssh_options "$known_hosts_file"
-
-  {
-    generate_remote_config_prelude prepare "$public_key"
-    generate_remote_script
-  } > "$local_script"
-
-  scp \
-    -q \
-    "${VPS_INITIAL_SSH_OPTIONS[@]}" \
-    "$local_script" \
-    "$VPS_LOGIN_USER@$VPS_HOST:$remote_script" || {
-    status=$?
-    rm -f "$local_script"
-    return "$status"
-  }
-
-  rm -f "$local_script"
-
-  remote_command="$remote_runner $(shell_quote "$remote_script") prepare; status=\$?; rm -f $(shell_quote "$remote_script"); exit \$status"
-  ssh \
-    -tt \
-    "${VPS_INITIAL_SSH_OPTIONS[@]}" \
-    "$VPS_LOGIN_USER@$VPS_HOST" \
-    "$remote_command"
-}
-
-run_remote_prepare() {
-  local public_key="$1"
-  local known_hosts_file="$2"
-
-  run_remote_prepare_from_file "$public_key" "$known_hosts_file"
-}
-
-verify_admin_login() {
-  local tailnet_ip="$1"
-  local known_hosts_file="$2"
-
-  ssh \
-    -i "$VPS_IDENTITY" \
-    -o IdentitiesOnly=yes \
-    -o BatchMode=yes \
-    -o UserKnownHostsFile="$known_hosts_file" \
-    -o HostKeyAlias=vps-bootstrap-target \
-    -o StrictHostKeyChecking=yes \
-    "$VPS_ADMIN_USER@$tailnet_ip" \
-    'sudo -n /usr/local/sbin/vps-agent-sudo-check'
-}
-
-run_remote_harden() {
-  local tailnet_ip="$1"
-  local public_key="$2"
-  local known_hosts_file="$3"
-
-  {
-    generate_remote_config_prelude harden "$public_key"
-    generate_remote_script
-  } |
-    ssh \
-      -tt \
-      -i "$VPS_IDENTITY" \
-      -o IdentitiesOnly=yes \
-      -o BatchMode=yes \
-      -o UserKnownHostsFile="$known_hosts_file" \
-      -o HostKeyAlias=vps-bootstrap-target \
-      -o StrictHostKeyChecking=yes \
-      "$VPS_ADMIN_USER@$tailnet_ip" \
-      'sudo bash -s' -- \
-      harden
-}
-
-run_dry_run() {
-  local public_key
-  public_key="$(read_public_key "$VPS_PUBKEY")" || return 1
-
-  cat << DRY_RUN
-Dry run: no SSH connections will be opened.
-
-Configuration:
-  host: $VPS_HOST
-  initial login user: $VPS_LOGIN_USER
-  admin user: $VPS_ADMIN_USER
-  public key: $VPS_PUBKEY
-  identity: $VPS_IDENTITY
-  login identity: ${VPS_LOGIN_IDENTITY:-<SSH agent/config>}
-  hostname: ${VPS_HOSTNAME:-<server default>}
-  public key fingerprint source: ${#public_key} bytes
-  Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')
-  developer CLIs: $(agent_cli_plan_label)
-  sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')
-  swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'ensure active (%s if no existing swap)' "$VPS_SWAP_SIZE" || printf 'disabled')
-  public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')
-
-Phase 1: prepare through $VPS_LOGIN_USER
-  $(build_prepare_command "$VPS_LOGIN_USER" "$VPS_HOST" "$VPS_LOGIN_IDENTITY")
-
-Phase 2: verify Tailnet key login
-  $(build_admin_verify_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
-
-Manual checkpoint:
-  verify SSH in another terminal, then type yes here to disable public SSH
-
-Phase 3: harden over Tailnet
-  $(build_admin_harden_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
-
-Tailscale SSH:
-$(
-    if [[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]]; then
-      printf '  after verification, confirm Tailnet ACL SSH rules before enabling Tailscale SSH\n'
-    else
-      printf '  disabled; OpenSSH over Tailnet remains the access model\n'
-    fi
-  )
-
-Agent CLI authentication:
-$(
-    if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
-      cat << 'AGENT_AUTH_DRY_RUN'
-  vps-agent-auth --all
-  vps-agent-auth --status
-AGENT_AUTH_DRY_RUN
-    elif [[ "$VPS_AGENT_CLIS_PROMPT" == "1" ]]; then
-      printf '  ask during interactive bootstrap; pass --install-agent-clis or --skip-agent-clis for unattended runs\n'
-    else
-      printf '  skipped; pass --install-agent-clis to install Codex, Grok, GitHub CLI, and vps-agent-auth\n'
-    fi
-  )
-
-UFW prepare preview:
-$(generate_ufw_rules prepare "$VPS_WEB")
-
-firewalld harden preview:
-$(generate_firewalld_rules harden "$VPS_WEB")
-DRY_RUN
-}
-
-doctor_ok() {
-  printf '[ok] %s\n' "$*"
-}
-
-doctor_warn() {
-  printf '[warn] %s\n' "$*"
-}
-
-doctor_info() {
-  printf '[info] %s\n' "$*"
-}
-
-doctor_fail() {
-  printf '[fail] %s\n' "$*"
-  VPS_DOCTOR_FAILURES=$((VPS_DOCTOR_FAILURES + 1))
-}
-
-doctor_command() {
-  local command_name="$1"
-  local purpose="$2"
-
-  if command -v "$command_name" > /dev/null 2>&1; then
-    doctor_ok "$command_name: available for $purpose"
-  else
-    doctor_warn "$command_name: unavailable; $purpose may need a package install"
-  fi
-}
-
-doctor_local_inputs() {
-  local public_key
-
-  printf '\n== Local bootstrap inputs ==\n'
-  if [[ -n "$VPS_HOST" ]]; then
-    doctor_ok "target host configured: $VPS_HOST"
-  else
-    doctor_info "target host not supplied; pass --host when checking a specific VPS plan"
-  fi
-
-  if public_key="$(read_public_key "$VPS_PUBKEY" 2> /dev/null)"; then
-    doctor_ok "public key readable: $VPS_PUBKEY (${#public_key} bytes)"
-  else
-    doctor_fail "public key missing or invalid: $VPS_PUBKEY"
-  fi
-
-  if [[ -r "$VPS_IDENTITY" ]]; then
-    doctor_ok "identity file readable: $VPS_IDENTITY"
-  else
-    doctor_fail "identity file missing or unreadable: $VPS_IDENTITY"
-  fi
-
-  if [[ -n "$VPS_LOGIN_IDENTITY" ]]; then
-    if [[ -r "$VPS_LOGIN_IDENTITY" ]]; then
-      doctor_ok "login identity file readable: $VPS_LOGIN_IDENTITY"
-    else
-      doctor_fail "login identity file missing or unreadable: $VPS_LOGIN_IDENTITY"
-    fi
-  else
-    doctor_info "initial SSH identity: use SSH agent or config"
-  fi
-
-  doctor_info "first SSH host key: paste a provider key if available, or scan and confirm the fingerprint when bootstrap prompts"
-  doctor_command ssh "root prepare, Tailnet verification, and harden phases"
-  doctor_command nc "post-bootstrap public port checks from a non-Tailnet network"
-}
-
-doctor_local_plan() {
-  printf '\n== Bootstrap plan ==\n'
-  doctor_info "admin user: $VPS_ADMIN_USER"
-  doctor_info "hostname: ${VPS_HOSTNAME:-<server default>}"
-  doctor_info "Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')"
-  doctor_info "developer CLIs: $(agent_cli_plan_label)"
-  doctor_info "sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')"
-  doctor_info "swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'ensure active (%s if no existing swap)' "$VPS_SWAP_SIZE" || printf 'disabled')"
-  doctor_info "public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')"
-}
-
-doctor_provider_firewall() {
-  printf '\n== Provider firewall checklist ==\n'
-  doctor_info "deny public TCP 22 after bootstrap"
-  if [[ "$VPS_WEB" == "1" ]]; then
-    doctor_info "allow public TCP 80/443 only for hosted web traffic"
-  else
-    doctor_info "deny public TCP 80/443 for private-only servers"
-  fi
-  doctor_info "deny other unsolicited public inbound traffic unless an app explicitly requires it"
-  doctor_info "provider firewalls usually cannot express Tailnet-only SSH; rely on Tailscale plus host firewall"
-}
-
-doctor_remote_vps_state() {
-  local helper sudoers_file tailscale_ip unit
-
-  printf '\n== VPS state checks when run on the server ==\n'
-  if [[ -r /etc/os-release ]]; then
-    # shellcheck disable=SC1091
-    . /etc/os-release
-    doctor_ok "os-release readable: ${PRETTY_NAME:-${ID:-unknown}}"
-  else
-    doctor_info "not running on a supported Linux VPS, or /etc/os-release is unreadable"
-  fi
-
-  if command -v tailscale > /dev/null 2>&1; then
-    tailscale_ip="$(tailscale ip -4 2> /dev/null | head -n 1 || true)"
-    if [[ "$tailscale_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-      doctor_ok "Tailscale reports IPv4: $tailscale_ip"
-    else
-      doctor_warn "tailscale exists but does not currently report a Tailnet IPv4"
-    fi
-  else
-    doctor_info "tailscale command not found; expected before bootstrap or on non-VPS workstations"
-  fi
-
-  if [[ "$VPS_SWAP_ENABLED" != "1" ]]; then
-    doctor_info "swap setup disabled by plan"
-  elif [[ -r /proc/swaps ]]; then
-    if awk 'NR > 1 && $1 != "" { found = 1 } END { exit(found ? 0 : 1) }' /proc/swaps; then
-      doctor_ok "active swap detected"
-    else
-      doctor_warn "no active swap detected"
-    fi
-  else
-    doctor_info "swap state unavailable; run doctor on the VPS to inspect it"
-  fi
-
-  for helper in \
-    /usr/local/sbin/vps-agent-sudo-check \
-    /usr/local/sbin/vps-agent-package \
-    /usr/local/sbin/vps-agent-service \
-    /usr/local/sbin/vps-agent-logs \
-    /usr/local/sbin/vps-agent-firewall \
-    /usr/local/sbin/vps-agent-deploy \
-    /usr/local/sbin/vps-agent-cli-update \
-    /usr/local/sbin/vps-os-update; do
-    if [[ -x "$helper" ]]; then
-      doctor_ok "helper executable: $helper"
-    else
-      doctor_info "helper not installed yet: $helper"
-    fi
-  done
-
-  sudoers_file="/etc/sudoers.d/90-vps-bootstrap-$VPS_ADMIN_USER"
-  if [[ -r "$sudoers_file" ]]; then
-    if grep -q 'VPS_AGENT_HELPERS' "$sudoers_file" && ! grep -q 'NOPASSWD:ALL' "$sudoers_file"; then
-      doctor_ok "sudo helper policy is scoped: $sudoers_file"
-    elif grep -q 'NOPASSWD:ALL' "$sudoers_file"; then
-      doctor_warn "sudo policy grants full passwordless sudo: $sudoers_file"
-    else
-      doctor_warn "sudo policy exists but does not match expected vps-bootstrap shape: $sudoers_file"
-    fi
-  else
-    doctor_info "sudo policy not readable or not installed yet: $sudoers_file"
-  fi
-
-  for unit in vps-agent-cli-update.timer vps-os-update.timer; do
-    if command -v systemctl > /dev/null 2>&1 && systemctl list-unit-files "$unit" --no-legend 2> /dev/null | grep -q .; then
-      doctor_ok "systemd timer installed: $unit"
-    else
-      doctor_info "systemd timer not detected: $unit"
-    fi
-  done
-
-  if [[ -r /etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf ]]; then
-    doctor_ok "SSH hardening snippet installed"
-  else
-    doctor_info "SSH hardening snippet not readable or not installed yet"
-  fi
-
-  if command -v ufw > /dev/null 2>&1; then
-    doctor_info "host firewall backend candidate: ufw"
-    ufw status verbose 2> /dev/null | sed 's/^/  /' || true
-  elif command -v firewall-cmd > /dev/null 2>&1; then
-    doctor_info "host firewall backend candidate: firewalld"
-    firewall-cmd --list-all 2> /dev/null | sed 's/^/  /' || true
-  else
-    doctor_info "no supported host firewall command detected yet"
-  fi
-
-  printf '\n== Exposed ports observation ==\n'
-  if command -v ss > /dev/null 2>&1; then
-    ss -tuln 2> /dev/null | sed 's/^/  /' || true
-  elif command -v netstat > /dev/null 2>&1; then
-    netstat -tuln 2> /dev/null | sed 's/^/  /' || true
-  else
-    doctor_info "ss/netstat unavailable; verify public exposure externally with nc from a non-Tailnet network"
-  fi
-}
-
-run_doctor() {
-  VPS_DOCTOR_FAILURES=0
-
-  cat << 'DOCTOR_HEADER'
-vps-bootstrap doctor
-Read-only audit: no SSH connections will be opened and no local or remote state will be changed.
-DOCTOR_HEADER
-
-  doctor_local_inputs
-  doctor_local_plan
-  doctor_provider_firewall
-  doctor_remote_vps_state
-
-  if [[ "$VPS_DOCTOR_FAILURES" -gt 0 ]]; then
-    printf '\nDoctor found %s blocking local input issue(s).\n' "$VPS_DOCTOR_FAILURES"
-    return 1
-  fi
-
-  printf '\nDoctor completed without blocking local input issues.\n'
-}
-
-run_bootstrap() {
-  local host_public_key known_hosts_file public_key prepare_log prepare_output tailnet_ip
-  local -a prepare_pipeline_status
-
-  validate_local_files || return 1
-  public_key="$(read_public_key "$VPS_PUBKEY")" || return 1
-
-  if [[ "$VPS_DRY_RUN" == "1" ]]; then
-    run_dry_run
-    return $?
-  fi
-
-  confirm_agent_cli_install || return 1
-  printf '[vps-bootstrap] Developer CLIs: %s.\n' "$(agent_cli_plan_label)"
-
-  host_public_key="$(prompt_host_public_key)" || return 1
-  known_hosts_file="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-known-hosts.XXXXXX")"
-  write_known_hosts_file "$host_public_key" "$known_hosts_file" || return 1
-  prepare_log="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap.XXXXXX")"
-  trap 'rm -f "$prepare_log" "$known_hosts_file"' RETURN
-
-  printf '[vps-bootstrap] Phase 1: prepare through %s. OpenSSH and sudo follow your local and server auth settings.\n' "$VPS_LOGIN_USER"
-  if run_remote_prepare "$public_key" "$known_hosts_file" 2>&1 | tee "$prepare_log"; then
-    prepare_pipeline_status=("${PIPESTATUS[@]}")
-  else
-    prepare_pipeline_status=("${PIPESTATUS[@]}")
-  fi
-
-  if ! prepare_output="$(cat "$prepare_log")"; then
-    error "could not read prepare output; public SSH remains available"
-    return 1
-  fi
-
-  if [[ "$prepare_output" != *"prepare phase complete;"* ]]; then
-    error "prepare did not report completion; public SSH remains available"
-    return 1
-  fi
-
-  tailnet_ip="$(parse_prepare_tailnet_ip "$prepare_output")"
-  if [[ "${prepare_pipeline_status[1]}" -ne 0 ]]; then
-    error "could not save prepare output locally; public SSH was not disabled"
-    return 1
-  fi
-  if [[ -z "$tailnet_ip" ]]; then
-    error "could not find Tailnet IP in prepare output; public SSH was not disabled"
-    return 1
-  fi
-  if [[ "${prepare_pipeline_status[0]}" -ne 0 ]]; then
-    error "initial SSH session ended with status ${prepare_pipeline_status[0]} after prepare reported a Tailnet IP; continuing with Tailnet verification"
-  fi
-
-  printf '[vps-bootstrap] Phase 2: verify Tailnet key login for %s@%s.\n' "$VPS_ADMIN_USER" "$tailnet_ip"
-  if ! verify_admin_login "$tailnet_ip" "$known_hosts_file"; then
-    error "Tailnet admin SSH/sudo verification failed; public SSH remains available and hardening was skipped"
-    error "Check the --identity key, the admin public key, and the Tailnet path, then rerun the same command"
-    return 1
-  fi
-
-  if ! confirm_harden_after_manual_ssh_check "$tailnet_ip"; then
-    return 0
-  fi
-  confirm_tailscale_ssh_acl_ready "$tailnet_ip"
-
-  printf '[vps-bootstrap] Phase 3: harden over Tailnet after successful key/sudo verification.\n'
-  run_remote_harden "$tailnet_ip" "$public_key" "$known_hosts_file"
 
   cat << SUMMARY
 
@@ -2397,30 +1668,67 @@ Bootstrap complete.
 
 Admin user: $VPS_ADMIN_USER
 Tailnet SSH target: $VPS_ADMIN_USER@$tailnet_ip
-Swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'enabled (%s if created)' "$VPS_SWAP_SIZE" || printf 'disabled')
-Verify from this laptop:
-  ssh -i $(shell_quote "$VPS_IDENTITY") $(shell_quote "$VPS_ADMIN_USER@$tailnet_ip")
+Swap: $VPS_SWAP_ACTION
 
 Public inbound policy:
   - TCP 22: Tailnet only
   - TCP 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'public' || printf 'closed')
 
-Provider firewall reminder:
-  Mirror this policy in your VPS provider firewall: no public TCP 22; public TCP 80/443 only when hosting web apps.
-
-Agent CLI authentication:
-$(
-    if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
-      cat << 'AGENT_AUTH_SUMMARY'
-  SSH to the server over Tailnet, then run:
-    vps-agent-auth --all
-    vps-agent-auth --status
-AGENT_AUTH_SUMMARY
-    else
-      printf '  Skipped. Rerun bootstrap with --install-agent-clis if this server should install Codex, Grok, GitHub CLI, and vps-agent-auth.\n'
-    fi
-  )
+Mirror this policy in the VPS provider firewall.
 SUMMARY
+
+  if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
+    cat << 'AUTH'
+
+Authenticate the developer CLIs while logged in as the admin user:
+  vps-agent-auth --all
+  vps-agent-auth --status
+AUTH
+  fi
+}
+
+run_bootstrap() {
+  local confirmed tailnet_ip
+
+  if [[ "$VPS_DRY_RUN" != "1" ]]; then
+    require_vps_root || return 1
+  fi
+
+  collect_configuration || return 1
+  configuration_summary
+
+  if [[ "$VPS_DRY_RUN" == "1" ]]; then
+    printf '\nDry run complete; no server changes were made.\n'
+    return 0
+  fi
+
+  confirmed="$(prompt_yes_no "Apply this configuration to the VPS")" || return 1
+  if [[ "$confirmed" != "1" ]]; then
+    printf '[vps-bootstrap] No server changes were made.\n'
+    return 0
+  fi
+
+  printf '[vps-bootstrap] Phase 1: prepare the VPS while public SSH remains open.\n'
+  run_server_phase prepare || return 1
+
+  tailnet_ip="$(tailnet_ipv4)"
+  if [[ -z "$tailnet_ip" ]]; then
+    error "Tailscale did not return an IPv4 address; public SSH remains open"
+    return 1
+  fi
+
+  if ! verify_prepared_admin; then
+    error "the new admin user failed the local sudo check; public SSH remains open"
+    return 1
+  fi
+
+  if ! confirm_tailnet_login "$tailnet_ip"; then
+    return 0
+  fi
+
+  printf '[vps-bootstrap] Phase 2: apply SSH and firewall hardening.\n'
+  run_server_phase harden || return 1
+  print_completion_summary "$tailnet_ip"
 }
 
 main() {
@@ -2430,11 +1738,6 @@ main() {
   if [[ "$VPS_SHOW_HELP" == "1" ]]; then
     usage
     return 0
-  fi
-
-  if [[ "$VPS_DOCTOR" == "1" ]]; then
-    run_doctor
-    return $?
   fi
 
   run_bootstrap
