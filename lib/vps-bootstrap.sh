@@ -350,6 +350,22 @@ shell_quote() {
   printf '%q' "$1"
 }
 
+read_interactive_answer() {
+  local answer
+
+  if [[ ! -r /dev/tty ]]; then
+    error "an interactive terminal is required for this prompt; public SSH remains available"
+    return 1
+  fi
+
+  if ! IFS= read -r answer < /dev/tty; then
+    error "could not read the terminal response; public SSH remains available"
+    return 1
+  fi
+
+  printf '%s' "$answer"
+}
+
 set_initial_ssh_options() {
   local known_hosts_file="$1"
 
@@ -463,7 +479,7 @@ confirm_scanned_host_public_key() {
 [vps-bootstrap]   $fingerprint
 [vps-bootstrap] If this is a fresh VPS and your provider does not expose a host key, type yes to trust and pin this key for bootstrap:
 PROMPT
-  IFS= read -r answer
+  answer="$(read_interactive_answer)" || return 1
   case "$answer" in
     yes | YES | Yes)
       return 0
@@ -486,7 +502,7 @@ prompt_host_public_key() {
 [vps-bootstrap] Example: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
 Host public key, or Enter to scan:
 PROMPT
-  IFS= read -r key_line
+  key_line="$(read_interactive_answer)" || return 1
   if [[ -z "$key_line" ]]; then
     scanned_key="$(scan_host_public_key)" || return 1
     confirm_scanned_host_public_key "$scanned_key" || return 1
@@ -1866,7 +1882,7 @@ confirm_harden_after_manual_ssh_check() {
 [vps-bootstrap]   ssh -i $(shell_quote "$VPS_IDENTITY") $(shell_quote "$VPS_ADMIN_USER@$tailnet_ip")
 [vps-bootstrap] Continue with hardening now? Type yes to disable public SSH:
 PROMPT
-  IFS= read -r answer
+  answer="$(read_interactive_answer)" || return 1
   case "$answer" in
     yes | YES | Yes)
       return 0
@@ -1896,7 +1912,7 @@ confirm_tailscale_ssh_acl_ready() {
 [vps-bootstrap] Keep OpenSSH as the safe access path unless you have already configured and reviewed Tailscale SSH ACLs.
 [vps-bootstrap] Enable Tailscale SSH during hardening now? Type yes to enable, or anything else to skip it:
 PROMPT
-  IFS= read -r answer
+  answer="$(read_interactive_answer)" || return 1
   case "$answer" in
     yes | YES | Yes)
       return 0
@@ -2303,7 +2319,11 @@ run_bootstrap() {
   fi
 
   printf '[vps-bootstrap] Phase 2: verify Tailnet key login for %s@%s.\n' "$VPS_ADMIN_USER" "$tailnet_ip"
-  verify_admin_login "$tailnet_ip" "$known_hosts_file"
+  if ! verify_admin_login "$tailnet_ip" "$known_hosts_file"; then
+    error "Tailnet admin SSH/sudo verification failed; public SSH remains available and hardening was skipped"
+    error "Check the --identity key, the admin public key, and the Tailnet path, then rerun the same command"
+    return 1
+  fi
 
   if ! confirm_harden_after_manual_ssh_check "$tailnet_ip"; then
     return 0

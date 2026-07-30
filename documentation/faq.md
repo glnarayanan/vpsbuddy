@@ -16,6 +16,13 @@ For an existing server, inspect dry-run output and the generated behavior first.
 You are responsible for understanding how it interacts with existing users,
 SSH, firewall, sudo, and service configuration.
 
+## Can I run the top-level CLI from the VPS itself?
+
+Yes. Run `bin/vps-bootstrap` from an interactive server shell when the full
+checkout and the required private key are already there. The CLI reads its
+confirmation prompts from the controlling terminal. Do not run only the
+generated remote prepare payload; it ends after the prepare phase by design.
+
 ## What if the provider disables password SSH at provisioning?
 
 Pass the provider key with `--login-identity`:

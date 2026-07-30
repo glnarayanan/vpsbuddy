@@ -25,6 +25,8 @@ changes, compatibility changes, and smoke-test notes.
   heredocs.
 - `documentation/README.md` is now an advanced usage reference instead of a
   duplicate project overview.
+- Interactive prompts now use the controlling terminal, and failed Tailnet
+  admin verification reports that hardening was skipped.
 
 ### Removed
 
