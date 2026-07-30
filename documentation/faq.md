@@ -83,12 +83,15 @@ setup through `vps-agent-auth`, using native CLI auth flows where available.
 ## Why install agent CLIs at all?
 
 Some operator workflows use Codex CLI, Grok CLI, and GitHub CLI directly on the
-server. The alpha default skips those installs; opt in only for servers that
-need them:
+server. An interactive bootstrap asks whether to install them before the first
+SSH connection. Answer `yes` for servers that need them:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --install-agent-clis
+bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user
 ```
+
+For unattended runs, use `--install-agent-clis` or `--skip-agent-clis` to make
+the choice explicit.
 
 ## Does bootstrap set up swap?
 

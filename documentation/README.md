@@ -53,7 +53,8 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
   Tailnet has been verified. The CLI asks for confirmation before enabling it
   because Tailnet ACL SSH rules are still required.
 - `--install-agent-clis`: best-effort install of Codex CLI, Grok CLI, GitHub
-  CLI, `vps-agent-auth`, and the agent CLI update timer.
+  CLI, `vps-agent-auth`, and the agent CLI update timer without asking.
+- `--skip-agent-clis`: skip those installs without asking.
 - `--swap-size <size>`: create this swap size when no active swap exists.
   Accepts a positive whole number followed by `M` or `G`. Defaults to `2G`.
 - `--no-swap`: skip swap setup.
@@ -76,6 +77,9 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
 - The normal path is to run the top-level CLI from a workstation. The VPS needs
   no checkout or private key; the CLI sends the generated remote script over
   SSH. Do not run only the generated remote prepare payload.
+- If neither agent CLI flag is set, the local CLI asks whether to install the
+  developer CLIs before the first SSH connection. Answering `yes` selects the
+  same install path as `--install-agent-clis`.
 - An interactive server shell can run the top-level CLI only when you have
   deliberately placed the checkout and private key there; this is optional.
 - For a provider that installs a key and disables password SSH at provisioning,
@@ -95,7 +99,7 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
 - Helper calls append best-effort JSONL audit events to
   `/var/log/vps-agent-actions.log`.
 - Developer CLI authentication is never collected during bootstrap. When
-  `--install-agent-clis` is used, authenticate later with `vps-agent-auth`.
+  agent CLIs are selected, authenticate later with `vps-agent-auth`.
 - Codex and Grok use their official standalone Linux installers. GitHub CLI
   uses GitHub's signed apt/rpm package repositories on Linux rather than adding
   Homebrew to the server.

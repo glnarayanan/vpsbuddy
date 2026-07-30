@@ -11,7 +11,12 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 - Public TCP 80/443 remain open by default for hosted web applications.
 - Unsolicited inbound traffic is denied by the host firewall.
 - The admin user has passwordless sudo by default only for root-owned `vps-agent-*` helpers so common agentic operations can work without raw broad root primitives.
-- Codex CLI, Grok CLI, and GitHub CLI are installed only when `--install-agent-clis` is passed, and authentication is deferred to the post-setup `vps-agent-auth` helper. These installers are best-effort: an upstream CLI installer outage must not abort the security bootstrap.
+- Codex CLI, Grok CLI, and GitHub CLI are installed only after the operator
+  selects them in the interactive prompt or passes `--install-agent-clis`, and
+  authentication is deferred to the post-setup `vps-agent-auth` helper. These
+  installers are best-effort: an upstream CLI installer outage must not abort
+  the security bootstrap. `--skip-agent-clis` makes the unattended choice to
+  skip them.
 - Codex and Grok are updated every two days by `vps-agent-cli-update.timer` only when agent CLIs are installed.
 - OS packages are updated every two weeks by `vps-os-update.timer`; apt hosts also receive fourteen-day `unattended-upgrades` periodic configuration.
 - Swap is active by default. When no active swap exists, prepare creates a root-owned `0600` `/swapfile`, formats and enables it, and adds it to `/etc/fstab`. The default size is `2G` and can be changed with `--swap-size`; `--no-swap` skips it.
@@ -20,7 +25,7 @@ The bootstrap process optimizes for avoiding accidental lockout while ending wit
 
 Before the first remote phase, the local CLI pins the VPS SSH host key in a temporary `known_hosts` file. If the provider exposes the host public key, the operator can paste it. If not, the CLI scans the live SSH host key, prints the key and fingerprint, and requires explicit confirmation before pinning it. The script then uses strict host-key checking for the rest of the run.
 
-The first remote phase connects as the required `--login-user` and runs as root directly when that user is root, or through an interactive `sudo bash` step for non-root sudo-capable image users. It creates or reuses the admin user, installs the selected `--pubkey`, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs developer CLIs, and configures the firewall with temporary public SSH still allowed. It does not enable Tailscale SSH before local Tailnet OpenSSH verification, because Tailscale SSH ACLs can block that verification path.
+The first remote phase connects as the required `--login-user` and runs as root directly when that user is root, or through an interactive `sudo bash` step for non-root sudo-capable image users. It creates or reuses the admin user, installs the selected `--pubkey`, installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables baseline services, optionally installs selected developer CLIs, and configures the firewall with temporary public SSH still allowed. It does not enable Tailscale SSH before local Tailnet OpenSSH verification, because Tailscale SSH ACLs can block that verification path.
 
 The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n /usr/local/sbin/vps-agent-sudo-check`. After that automated check succeeds, the CLI asks the operator to verify SSH from another terminal and type `yes` before the harden phase runs over the Tailnet connection.
 
@@ -32,7 +37,13 @@ The harden phase also writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.
 
 ## Developer CLI Credentials
 
-When `--install-agent-clis` is used, `vps-agent-auth` runs native auth flows where available and prints setup checks for API-key based tools after bootstrap is complete. Codex uses OpenAI's standalone Linux installer with `CODEX_NON_INTERACTIVE=1`, Grok uses xAI's official Linux installer, and GitHub CLI uses GitHub's signed Linux package repositories for apt or rpm hosts. Homebrew is not installed on fresh VPS images by default, so it is not the server bootstrap default.
+When agent CLIs are selected by the prompt or `--install-agent-clis`,
+`vps-agent-auth` runs native auth flows where available and prints setup checks
+for API-key based tools after bootstrap is complete. Codex uses OpenAI's
+standalone Linux installer with `CODEX_NON_INTERACTIVE=1`, Grok uses xAI's
+official Linux installer, and GitHub CLI uses GitHub's signed Linux package
+repositories for apt or rpm hosts. Homebrew is not installed on fresh VPS
+images by default, so it is not the server bootstrap default.
 
 The bootstrap script does not accept, upload, or store raw agent CLI tokens, API keys, or GitHub private keys. Each CLI handles its own auth state or configuration:
 
@@ -46,7 +57,9 @@ Each `vps-agent-*` helper writes a best-effort JSONL event to `/var/log/vps-agen
 
 ## Update Automation
 
-When agent CLIs are installed, `vps-agent-cli-update.timer` runs every two days with persistence across reboots. It reruns OpenAI's Codex installer in non-interactive mode and runs `grok update` as the admin user.
+When agent CLIs are selected, `vps-agent-cli-update.timer` runs every two days
+with persistence across reboots. It reruns OpenAI's Codex installer in
+non-interactive mode and runs `grok update` as the admin user.
 
 The Codex, Grok, and Tailscale installer paths intentionally trust official mutable upstream installer/update endpoints because version-pinned installers are not available in this script. The bootstrap logs that accepted supply-chain trust boundary when those installers or updates run, and the default sudo policy does not give the installed user-level CLIs direct passwordless root access.
 

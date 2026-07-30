@@ -31,6 +31,8 @@ changes, compatibility changes, and smoke-test notes.
   status can stop the local verification and hardening phases.
 - The local handoff now requires the remote prepare-complete marker before it
   can continue to Tailnet verification.
+- Interactive bootstrap now asks whether to install Codex, Grok, and GitHub
+  CLI; explicit install and skip flags remain available for unattended runs.
 
 ### Removed
 

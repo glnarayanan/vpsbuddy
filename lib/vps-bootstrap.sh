@@ -13,6 +13,7 @@ reset_config() {
   VPS_HOSTNAME=""
   VPS_ENABLE_TAILSCALE_SSH="0"
   VPS_INSTALL_AGENT_CLIS="0"
+  VPS_AGENT_CLIS_PROMPT="1"
   VPS_FULL_SUDO="0"
   VPS_SWAP_ENABLED="1"
   VPS_SWAP_SIZE="2G"
@@ -44,8 +45,8 @@ Options:
   --identity <path>             Private key used to verify Tailnet login. Default: pubkey without .pub.
   --hostname <name>             Hostname to set on the server and use for Tailscale.
   --enable-tailscale-ssh        Enable Tailscale SSH after joining the Tailnet.
-  --install-agent-clis          Install Codex, Grok, and GitHub CLIs. Opt-in.
-  --skip-agent-clis             Skip Codex, Grok, and GitHub CLI installation. Default.
+  --install-agent-clis          Install Codex, Grok, and GitHub CLIs without asking.
+  --skip-agent-clis             Skip Codex, Grok, and GitHub CLI installation without asking.
   --full-sudo                   Use NOPASSWD:ALL instead of scoped passwordless sudo.
   --swap-size <size>            Create this swap size when no active swap exists. Default: 2G.
   --no-swap                     Do not create or enable swap during prepare.
@@ -60,6 +61,10 @@ The tool uses --login-user for the first public SSH connection. Pass
 through your SSH agent or config. Before that first connection, paste the
 provider SSH host key if available, or press Enter to scan the live host key and
 confirm its fingerprint before pinning it.
+
+If neither agent CLI flag is passed, an interactive bootstrap asks whether to
+install Codex, Grok, and GitHub CLI before opening the first SSH connection.
+Use an explicit flag for unattended runs.
 
 The doctor command performs local/read-only checks only. Run it from your
 workstation before bootstrap or on a bootstrapped VPS after setup.
@@ -217,10 +222,12 @@ parse_args() {
         ;;
       --install-agent-clis)
         VPS_INSTALL_AGENT_CLIS="1"
+        VPS_AGENT_CLIS_PROMPT="0"
         shift
         ;;
       --skip-agent-clis | --no-agent-clis)
         VPS_INSTALL_AGENT_CLIS="0"
+        VPS_AGENT_CLIS_PROMPT="0"
         shift
         ;;
       --full-sudo)
@@ -364,6 +371,45 @@ read_interactive_answer() {
   fi
 
   printf '%s' "$answer"
+}
+
+confirm_agent_cli_install() {
+  local answer
+
+  if [[ "$VPS_AGENT_CLIS_PROMPT" != "1" ]]; then
+    return 0
+  fi
+
+  cat >&2 << 'PROMPT'
+[vps-bootstrap] Optional developer CLIs: Codex, Grok, and GitHub CLI.
+[vps-bootstrap] Install them for the admin user, plus vps-agent-auth and the CLI update timer?
+[vps-bootstrap] Type yes to install, or no to skip:
+PROMPT
+  answer="$(read_interactive_answer)" || return 1
+  case "$answer" in
+    yes | YES | Yes | y | Y)
+      VPS_INSTALL_AGENT_CLIS="1"
+      ;;
+    '' | no | NO | No | n | N)
+      VPS_INSTALL_AGENT_CLIS="0"
+      ;;
+    *)
+      error "answer yes or no; no remote changes have been made"
+      return 1
+      ;;
+  esac
+
+  VPS_AGENT_CLIS_PROMPT="0"
+}
+
+agent_cli_plan_label() {
+  if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
+    printf 'install'
+  elif [[ "$VPS_AGENT_CLIS_PROMPT" == "1" ]]; then
+    printf 'ask during interactive bootstrap'
+  else
+    printf 'skip'
+  fi
 }
 
 set_initial_ssh_options() {
@@ -2038,7 +2084,7 @@ Configuration:
   hostname: ${VPS_HOSTNAME:-<server default>}
   public key fingerprint source: ${#public_key} bytes
   Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')
-  developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')
+  developer CLIs: $(agent_cli_plan_label)
   sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')
   swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'ensure active (%s if no existing swap)' "$VPS_SWAP_SIZE" || printf 'disabled')
   public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')
@@ -2071,6 +2117,8 @@ $(
   vps-agent-auth --all
   vps-agent-auth --status
 AGENT_AUTH_DRY_RUN
+    elif [[ "$VPS_AGENT_CLIS_PROMPT" == "1" ]]; then
+      printf '  ask during interactive bootstrap; pass --install-agent-clis or --skip-agent-clis for unattended runs\n'
     else
       printf '  skipped; pass --install-agent-clis to install Codex, Grok, GitHub CLI, and vps-agent-auth\n'
     fi
@@ -2154,7 +2202,7 @@ doctor_local_plan() {
   doctor_info "admin user: $VPS_ADMIN_USER"
   doctor_info "hostname: ${VPS_HOSTNAME:-<server default>}"
   doctor_info "Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')"
-  doctor_info "developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')"
+  doctor_info "developer CLIs: $(agent_cli_plan_label)"
   doctor_info "sudo mode: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless' || printf 'scoped passwordless')"
   doctor_info "swap: $([[ "$VPS_SWAP_ENABLED" == "1" ]] && printf 'ensure active (%s if no existing swap)' "$VPS_SWAP_SIZE" || printf 'disabled')"
   doctor_info "public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')"
@@ -2302,6 +2350,9 @@ run_bootstrap() {
     run_dry_run
     return $?
   fi
+
+  confirm_agent_cli_install || return 1
+  printf '[vps-bootstrap] Developer CLIs: %s.\n' "$(agent_cli_plan_label)"
 
   host_public_key="$(prompt_host_public_key)" || return 1
   known_hosts_file="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-known-hosts.XXXXXX")"

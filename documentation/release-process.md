@@ -49,7 +49,8 @@ Confirm the dry-run communicates:
 - Tailscale verification before SSH hardening.
 - Final web exposure based on `--web` or `--no-web`.
 - Default bounded sudo policy or explicit `--full-sudo` behavior.
-- Agent CLI installation is skipped unless `--install-agent-clis` is present.
+- Interactive runs ask whether to install agent CLIs; smoke tests should pass
+  `--install-agent-clis` or `--skip-agent-clis` so the choice is explicit.
 
 ## Disposable VPS Smoke Test
 

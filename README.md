@@ -28,7 +28,8 @@ testing, but public releases should be treated as early and security-sensitive.
   for hosted web applications.
 - Creates and enables a 2G `/swapfile` when no active swap exists, or uses the
   size passed with `--swap-size`.
-- Installs Codex CLI, Grok CLI, and GitHub CLI only when explicitly requested.
+- Asks whether to install Codex CLI, Grok CLI, and GitHub CLI during an
+  interactive bootstrap; explicit flags control unattended runs.
 - Adds an OS package update timer by default and agent CLI update timers only
   when agent CLIs are installed.
 - Supports fresh Ubuntu, Debian, Fedora, RHEL-family, AlmaLinux, and Rocky Linux
@@ -103,8 +104,11 @@ HTTPS should remain closed.
 Swap setup runs by default during prepare. Use `--no-swap` when another system
 already manages memory or when the host should not create swap.
 
-To install optional developer CLIs, pass `--install-agent-clis`. These installs
-are best-effort so an upstream CLI installer outage does not stop SSH hardening:
+An interactive bootstrap asks before the first SSH connection whether to
+install optional developer CLIs. Answer `yes` to install Codex CLI, Grok CLI,
+GitHub CLI, `vps-agent-auth`, and the CLI update timer. These installs are
+best-effort so an upstream CLI installer outage does not stop SSH hardening.
+For unattended runs, pass `--install-agent-clis` or `--skip-agent-clis`:
 
 ```bash
 bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --install-agent-clis
@@ -160,12 +164,12 @@ For a real VPS smoke test, use a disposable fresh instance and verify:
 - Public TCP 22 is closed from a non-Tailnet network.
 - Public TCP 80/443 match the selected `--web` setting.
 - `systemctl list-timers` shows the OS update timer, plus the agent CLI update
-  timer when `--install-agent-clis` was used.
+  timer when agent CLIs were selected.
 - `swapon --show` reports active swap, unless `--no-swap` was used.
 - `bin/vps-bootstrap doctor` reports no blocking local input issues from the
   workstation.
 - `vps-agent-auth --status` reports the expected post-setup auth state when
-  `--install-agent-clis` was used.
+  agent CLIs were selected.
 
 The release checklist lives in
 [documentation/release-process.md](documentation/release-process.md).

@@ -99,6 +99,7 @@ test_parse_args_sets_defaults_and_flags() {
   assert_eq "parse hostname" "app-vps" "$VPS_HOSTNAME"
   assert_eq "parse tailscale ssh flag" "1" "$VPS_ENABLE_TAILSCALE_SSH"
   assert_eq "parse agent cli install default" "0" "$VPS_INSTALL_AGENT_CLIS"
+  assert_eq "parse agent cli prompt default" "1" "$VPS_AGENT_CLIS_PROMPT"
   assert_eq "parse full sudo flag" "1" "$VPS_FULL_SUDO"
   assert_eq "swap setup enabled by default" "1" "$VPS_SWAP_ENABLED"
   assert_eq "default swap size" "2G" "$VPS_SWAP_SIZE"
@@ -111,6 +112,7 @@ test_parse_args_supports_installing_agent_clis() {
   parse_args --host example.test --login-user admin --install-agent-clis
 
   assert_eq "install agent clis enables install" "1" "$VPS_INSTALL_AGENT_CLIS"
+  assert_eq "install agent clis disables prompt" "0" "$VPS_AGENT_CLIS_PROMPT"
 }
 
 test_parse_args_supports_web_equals_false() {
@@ -148,6 +150,27 @@ test_parse_args_supports_skipping_agent_clis() {
   parse_args --host example.test --login-user admin --skip-agent-clis
 
   assert_eq "skip agent clis disables install" "0" "$VPS_INSTALL_AGENT_CLIS"
+  assert_eq "skip agent clis disables prompt" "0" "$VPS_AGENT_CLIS_PROMPT"
+}
+
+test_agent_cli_prompt_accepts_yes_and_no() {
+  local install
+
+  install="$(
+    reset_config
+    read_interactive_answer() { printf 'yes'; }
+    confirm_agent_cli_install 2> /dev/null
+    printf '%s' "$VPS_INSTALL_AGENT_CLIS"
+  )"
+  assert_eq "agent cli prompt yes enables install" "1" "$install"
+
+  install="$(
+    reset_config
+    read_interactive_answer() { printf 'no'; }
+    confirm_agent_cli_install 2> /dev/null
+    printf '%s' "$VPS_INSTALL_AGENT_CLIS"
+  )"
+  assert_eq "agent cli prompt no skips install" "0" "$install"
 }
 
 test_parse_args_rejects_removed_agent_auth_options() {
@@ -387,9 +410,9 @@ test_dry_run_prints_rollback_safe_phase_ordering() {
   assert_contains "dry-run includes prepare phase" "$output" "Phase 1: prepare through admin"
   assert_contains "dry-run includes pinned host key note" "$output" "temporary known_hosts"
   assert_contains "dry-run includes verify phase" "$output" "Phase 2: verify Tailnet key login"
-  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: skip"
+  assert_contains "dry-run includes agent cli config" "$output" "developer CLIs: ask during interactive bootstrap"
   assert_contains "dry-run includes swap config" "$output" "swap: ensure active (2G if no existing swap)"
-  assert_contains "dry-run explains skipped agent auth" "$output" "pass --install-agent-clis"
+  assert_contains "dry-run explains agent cli choice" "$output" "pass --install-agent-clis or --skip-agent-clis"
   assert_not_contains "dry-run omits post setup auth command when skipped" "$output" "vps-agent-auth --all"
   assert_contains "dry-run includes manual harden checkpoint" "$output" "Manual checkpoint"
   assert_contains "dry-run includes harden phase" "$output" "Phase 3: harden over Tailnet"
@@ -438,6 +461,7 @@ test_bootstrap_continues_after_completed_prepare_session() {
       VPS_ADMIN_USER="deploy"
       VPS_PUBKEY="tests/fixtures/id_ed25519.pub"
       VPS_IDENTITY="tests/fixtures/identity_fixture"
+      VPS_AGENT_CLIS_PROMPT="0"
 
       validate_local_files() { :; }
       read_public_key() { printf "ssh-ed25519 AAAAexample"; }
@@ -633,6 +657,7 @@ test_parse_args_supports_web_equals_false
 test_parse_args_supports_swap_options
 test_parse_args_rejects_invalid_swap_size
 test_parse_args_supports_skipping_agent_clis
+test_agent_cli_prompt_accepts_yes_and_no
 test_parse_args_rejects_removed_agent_auth_options
 test_identity_path_defaults_from_public_key
 test_hardening_config_contains_required_directives
