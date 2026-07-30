@@ -40,6 +40,7 @@ npm install -g prettier@3.3.3
 The tests cover:
 
 - CLI argument parsing and defaults.
+- Initial SSH key selection with `--login-identity` and SSH agent/config fallback.
 - Opt-in developer CLI installation defaults.
 - Public/private key path handling.
 - SSH hardening snippet generation.

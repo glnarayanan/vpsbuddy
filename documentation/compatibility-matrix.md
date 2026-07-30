@@ -17,9 +17,9 @@ images. It is not a guarantee that every provider image has been smoke-tested.
 
 ## Required Host Capabilities
 
-| Capability                 | Required | Why                                                           |
-| -------------------------- | -------- | ------------------------------------------------------------- |
-| Initial password SSH login | Yes      | Pass the provider's initial SSH user with `--login-user`.     |
+| Capability                | Required | Why                                                                    |
+| ------------------------- | -------- | ---------------------------------------------------------------------- |
+| Initial SSH login         | Yes      | Use a provider key or password; pass `--login-identity` for an explicit key. |
 | systemd                    | Yes      | Timers and service management assume systemd.                 |
 | OpenSSH server             | Yes      | The hardening phase writes OpenSSH config.                    |
 | UFW or firewalld path      | Yes      | Host firewall commands are generated for supported families.  |

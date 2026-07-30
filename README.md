@@ -2,7 +2,7 @@
 
 Security-first VPS setup scripts for fresh servers.
 
-`vps-bootstrap` takes a newly provisioned VPS from an initial password SSH login
+`vps-bootstrap` takes a newly provisioned VPS from an initial provider SSH login
 to a Tailnet-first operating baseline. It is meant for
 operators who want a repeatable first-hour hardening flow before installing an
 application stack.
@@ -23,8 +23,7 @@ testing, but public releases should be treated as early and security-sensitive.
 - Pins the first SSH connection to a host public key pasted from the provider or
   scanned and confirmed during bootstrap.
 - Installs and joins Tailscale interactively.
-- Verifies Tailnet SSH and bounded sudo before disabling public password
-  SSH.
+- Verifies Tailnet SSH and bounded sudo before disabling public SSH.
 - Restricts SSH to the Tailnet while leaving public TCP 80/443 open by default
   for hosted web applications.
 - Creates and enables a 2G `/swapfile` when no active swap exists, or uses the
@@ -37,8 +36,8 @@ testing, but public releases should be treated as early and security-sensitive.
 
 ## Requirements
 
-- A fresh VPS where you can initially SSH with password authentication as the
-  provider's initial SSH user.
+- A fresh VPS where you can initially SSH as the provider's initial SSH user,
+  with a password or a key.
 - A local SSH public/private key pair.
 - Access to the VPS provider console for recovery and optional host-key
   comparison.
@@ -71,6 +70,7 @@ Useful options:
 bin/vps-bootstrap \
   --host 203.0.113.10 \
   --login-user your-provider-user \
+  --login-identity ~/.ssh/provider_key \
   --user deploy \
   --pubkey ~/.ssh/id_ed25519.pub \
   --identity ~/.ssh/id_ed25519 \
@@ -90,6 +90,11 @@ bin/vps-bootstrap \
   --identity ~/.ssh/id_ed25519 \
   --hostname app-01
 ```
+
+If the provider installs a key for a root-only initial login, pass that private
+key with `--login-identity`. The existing `--identity` option remains the key
+used for the managed admin user over the Tailnet. If the login key is already
+available through your SSH agent or SSH config, `--login-identity` is optional.
 
 Use `--no-web` or `--web=false` for private-only servers where public HTTP and
 HTTPS should remain closed.
@@ -127,7 +132,7 @@ verified:
 If preparation or verification fails, the original public SSH access path is left
 active so the server can be repaired.
 
-If you do not confirm hardening, the script leaves password/public SSH available
+If you do not confirm hardening, the script leaves public SSH available
 and exits cleanly. Rerun the same command later; it will re-check the completed
 setup and continue to the hardening confirmation.
 

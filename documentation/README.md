@@ -39,6 +39,9 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
 
 - `--login-user <name>`: provider's initial SSH user. Required for bootstrap and
   dry-run.
+- `--login-identity <path>`: private key for the initial public SSH login. Use
+  this when the provider key is not already available through your SSH agent or
+  SSH config.
 - `--user <name>`: admin sudo user to create or reuse after login. Defaults to
   `deploy`.
 - `--pubkey <path>`: public key to install. Defaults to
@@ -66,13 +69,16 @@ bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname
   local user key and not only a SHA256 fingerprint.
 - `--pubkey` is your local login public key to install for the admin user. It is
   expected to be absent on a fresh VPS before the prepare phase.
-- The prepare phase temporarily keeps the original public password SSH path
-  available. The harden phase runs only after Tailnet admin SSH and bounded sudo
+- The prepare phase temporarily keeps the original public SSH path available.
+  The harden phase runs only after Tailnet admin SSH and bounded sudo
   verification pass and you type `yes` after manually checking SSH from another
   terminal.
+- For a provider that installs a key and disables password SSH at provisioning,
+  pass `--login-identity ~/.ssh/provider_key`. This key is used for the initial
+  SSH and SCP steps only; `--identity` remains the managed admin key.
 - For non-root `--login-user` values, the CLI uploads a temporary prepare script
-  and then runs it with interactive `sudo` so password prompts stay attached to
-  your terminal.
+  and then runs it with interactive `sudo`. The login user still needs usable
+  sudo access.
 - If you decline hardening, rerun the same command later. The prepare phase is
   safe to repeat and will re-check existing user, key, Tailscale, and sudo state
   before asking again.

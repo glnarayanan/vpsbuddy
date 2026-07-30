@@ -55,7 +55,7 @@ Out of scope:
 The model assumes attackers may:
 
 - Observe or interfere with public-network SSH if host identity is not pinned.
-- Attempt password SSH against public TCP 22 before hardening.
+- Attempt public SSH connections against TCP 22 before hardening.
 - Exploit loose provider firewall rules.
 - Abuse overly broad passwordless sudo if granted.
 - Seek leaked API keys, private keys, or CLI auth material.
@@ -70,7 +70,7 @@ or a compromised Tailnet administrator.
 | Threat                                     | Mitigation                                                                                                                                                                      |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | First-connection SSH impersonation         | Pin a provider-supplied host key when available; otherwise scan the live host key, require explicit fingerprint confirmation, and use strict host-key checking afterward.       |
-| Operator lockout during hardening          | Keep the original public password SSH path open until Tailnet admin SSH and sudo verification succeed.                                                                          |
+| Operator lockout during hardening          | Keep the original public SSH path open until Tailnet admin SSH and sudo verification succeed.                                                                                     |
 | Public SSH remains exposed after success   | Harden SSH only after verification and remove public SSH from UFW or firewalld.                                                                                                 |
 | Provider firewall keeps TCP 22 exposed     | Document provider firewall rules and require independent verification from a non-Tailnet network.                                                                               |
 | Admin user receives excessive default sudo | Default to passwordless sudo only for root-owned `vps-agent-*` helpers.                                                                                                         |

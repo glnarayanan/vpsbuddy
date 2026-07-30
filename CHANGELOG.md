@@ -14,6 +14,7 @@ changes, compatibility changes, and smoke-test notes.
 - Read-only `vps-bootstrap doctor` audit mode.
 - Best-effort JSONL audit logging for root-owned `vps-agent-*` helper calls.
 - Idempotent swap setup with a configurable default `2G` `/swapfile`.
+- Key-based initial SSH login through the optional `--login-identity` path.
 
 ### Changed
 
@@ -36,7 +37,7 @@ Initial alpha release target.
 
 Expected scope:
 
-- Fresh VPS bootstrap from temporary root/password SSH to Tailnet-first admin
+- Fresh VPS bootstrap from temporary root/provider SSH to Tailnet-first admin
   access.
 - Host-key pinning from provider-console SSH host public keys.
 - Non-root admin user creation with local SSH key installation.

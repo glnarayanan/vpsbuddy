@@ -9,12 +9,29 @@ choose later.
 ## Can I run it on an existing production server?
 
 That is not the intended alpha path. The script is designed for fresh VPS hosts
-where temporary password SSH is still available for the provider's initial SSH
-user, and there is no existing application state to preserve.
+where the provider's initial SSH user is reachable by key or password, and there
+is no existing application state to preserve.
 
 For an existing server, inspect dry-run output and the generated behavior first.
 You are responsible for understanding how it interacts with existing users,
 SSH, firewall, sudo, and service configuration.
+
+## What if the provider disables password SSH at provisioning?
+
+Pass the provider key with `--login-identity`:
+
+```bash
+bin/vps-bootstrap \
+  --host 203.0.113.10 \
+  --login-user root \
+  --login-identity ~/.ssh/provider_key \
+  --pubkey ~/.ssh/id_ed25519.pub \
+  --identity ~/.ssh/id_ed25519
+```
+
+That key is used for the initial public SSH and SCP steps. `--identity` remains
+the private key used for the managed admin user over the Tailnet. If the provider
+key is already in your SSH agent or SSH config, `--login-identity` is optional.
 
 ## What if my provider does not show the server SSH host public key?
 
@@ -36,12 +53,12 @@ and continues.
 
 ## Why keep public SSH open during the prepare phase?
 
-To avoid lockout. The original public password SSH path remains available until
+To avoid lockout. The original public SSH path remains available until
 the script verifies that the new admin user can SSH over the Tailnet and run the
 bounded sudo check, and until you confirm that you manually verified SSH from
 another terminal. Only then does the harden phase remove public SSH.
 
-## What if I am not ready to disable password SSH?
+## What if I am not ready to disable public SSH?
 
 Answer anything other than `yes` at the hardening prompt. The script leaves the
 original public SSH path available and exits cleanly. Rerun the same command
@@ -121,8 +138,7 @@ For release confidence, use a disposable fresh VPS and follow
 ## What happens if Tailscale login fails?
 
 The harden phase should not run because Tailnet verification cannot succeed.
-Root/password SSH remains available so you can repair or destroy the disposable
-host.
+Public SSH remains available so you can repair or destroy the disposable host.
 
 ## Which operating systems are supported?
 

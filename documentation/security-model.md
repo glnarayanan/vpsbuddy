@@ -24,7 +24,7 @@ The first remote phase connects as the required `--login-user` and runs as root 
 
 The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n /usr/local/sbin/vps-agent-sudo-check`. After that automated check succeeds, the CLI asks the operator to verify SSH from another terminal and type `yes` before the harden phase runs over the Tailnet connection.
 
-If the operator does not confirm hardening, the original public password SSH path remains open and the script exits successfully. A later run repeats the idempotent prepare checks and can continue to the hardening confirmation.
+If the operator does not confirm hardening, the original public SSH path remains open and the script exits successfully. A later run repeats the idempotent prepare checks and can continue to the hardening confirmation.
 
 The prepare phase temporarily grants broad passwordless sudo so the verified Tailnet harden phase can run through `sudo bash -s`. The harden phase then writes the final requested sudo policy: bounded helper access by default, or `NOPASSWD:ALL` only when `--full-sudo` is passed.
 

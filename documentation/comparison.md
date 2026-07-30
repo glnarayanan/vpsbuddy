@@ -9,7 +9,7 @@ It is deliberately smaller than a hosting platform.
 
 - A local Bash CLI run from your workstation.
 - A phased hardening flow for fresh VPS hosts.
-- A way to move SSH access from temporary public password login to
+- A way to move SSH access from temporary public login to
   Tailnet-first admin access.
 - A baseline for firewall posture, bounded sudo helpers, update timers, and
   developer CLI installation.
@@ -47,7 +47,7 @@ that is the right application layer.
 
 Cloud-init and Ansible are broader provisioning systems. `vps-bootstrap` is a
 narrow operator workflow with built-in phase ordering for one risky transition:
-moving a fresh VPS from public password SSH to verified Tailnet admin SSH
+moving a fresh VPS from public SSH to verified Tailnet admin SSH
 without locking yourself out.
 
 Use cloud-init or Ansible when you need general fleet provisioning. Use

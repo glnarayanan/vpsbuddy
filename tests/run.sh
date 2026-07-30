@@ -83,6 +83,7 @@ test_parse_args_sets_defaults_and_flags() {
     --user ops \
     --pubkey tests/fixtures/id_ed25519.pub \
     --identity tests/fixtures/identity_fixture \
+    --login-identity tests/fixtures/identity_fixture \
     --hostname app-vps \
     --enable-tailscale-ssh \
     --full-sudo \
@@ -94,6 +95,7 @@ test_parse_args_sets_defaults_and_flags() {
   assert_eq "parse admin user" "ops" "$VPS_ADMIN_USER"
   assert_eq "parse pubkey" "tests/fixtures/id_ed25519.pub" "$VPS_PUBKEY"
   assert_eq "parse identity" "tests/fixtures/identity_fixture" "$VPS_IDENTITY"
+  assert_eq "parse login identity" "tests/fixtures/identity_fixture" "$VPS_LOGIN_IDENTITY"
   assert_eq "parse hostname" "app-vps" "$VPS_HOSTNAME"
   assert_eq "parse tailscale ssh flag" "1" "$VPS_ENABLE_TAILSCALE_SSH"
   assert_eq "parse agent cli install default" "0" "$VPS_INSTALL_AGENT_CLIS"
@@ -457,6 +459,20 @@ test_parse_args_sets_default_user() {
   parse_args --host example.test --login-user admin
 
   assert_eq "default user is deploy" "deploy" "$VPS_ADMIN_USER"
+  assert_eq "login identity defaults to SSH agent or config" "" "$VPS_LOGIN_IDENTITY"
+}
+
+test_initial_ssh_options_support_explicit_login_identity() {
+  reset_config
+  VPS_LOGIN_IDENTITY="tests/fixtures/identity_fixture"
+  set_initial_ssh_options "/tmp/vps-bootstrap-known-hosts"
+
+  assert_contains "initial ssh options pin login identity" "${VPS_INITIAL_SSH_OPTIONS[*]}" "-i tests/fixtures/identity_fixture"
+  assert_contains "initial ssh options restrict identities" "${VPS_INITIAL_SSH_OPTIONS[*]}" "IdentitiesOnly=yes"
+
+  reset_config
+  set_initial_ssh_options "/tmp/vps-bootstrap-known-hosts"
+  assert_not_contains "initial ssh options preserve agent config" "${VPS_INITIAL_SSH_OPTIONS[*]}" "IdentitiesOnly=yes"
 }
 
 test_parse_args_requires_host() {
@@ -485,6 +501,28 @@ test_parse_args_doctor_does_not_require_host() {
 
   assert_eq "doctor mode enabled" "1" "$VPS_DOCTOR"
   assert_eq "doctor mode allows empty host" "" "$VPS_HOST"
+}
+
+test_validate_local_files_rejects_missing_login_identity() {
+  reset_config
+  VPS_PUBKEY="tests/fixtures/id_ed25519.pub"
+  VPS_IDENTITY="tests/fixtures/identity_fixture"
+  VPS_LOGIN_IDENTITY="tests/fixtures/missing-login-identity"
+
+  if validate_local_files > /tmp/vps-bootstrap-test.out 2> /tmp/vps-bootstrap-test.err; then
+    fail "missing login identity should fail"
+    return
+  fi
+
+  pass "missing login identity should fail"
+}
+
+test_build_prepare_command_includes_login_identity() {
+  local command
+  command="$(build_prepare_command root 203.0.113.10 tests/fixtures/identity_fixture)"
+
+  assert_contains "prepare command pins login identity" "$command" "-i tests/fixtures/identity_fixture"
+  assert_contains "prepare command restricts login identities" "$command" "-o IdentitiesOnly=yes"
 }
 
 test_remote_script_prepends_missing_sshd_include() {
@@ -583,6 +621,9 @@ test_parse_args_sets_default_user
 test_parse_args_requires_host
 test_parse_args_requires_login_user
 test_parse_args_doctor_does_not_require_host
+test_validate_local_files_rejects_missing_login_identity
+test_initial_ssh_options_support_explicit_login_identity
+test_build_prepare_command_includes_login_identity
 test_remote_script_prepends_missing_sshd_include
 test_remote_script_installs_agent_helper_audit_logging
 test_remote_script_defaults_skip_agent_clis_without_prelude

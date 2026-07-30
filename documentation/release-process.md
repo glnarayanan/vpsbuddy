@@ -43,6 +43,7 @@ bin/vps-bootstrap doctor --host 203.0.113.10
 Confirm the dry-run communicates:
 
 - Host-key prompt expectations.
+- Initial key-only SSH access through `--login-identity` when the provider image disables password SSH.
 - Prepare, verify, and harden phase ordering.
 - Admin user and key paths.
 - Tailscale verification before SSH hardening.

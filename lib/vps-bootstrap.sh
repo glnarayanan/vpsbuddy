@@ -8,6 +8,8 @@ reset_config() {
   VPS_ADMIN_USER="deploy"
   VPS_PUBKEY="${HOME}/.ssh/id_ed25519.pub"
   VPS_IDENTITY=""
+  VPS_LOGIN_IDENTITY=""
+  VPS_INITIAL_SSH_OPTIONS=()
   VPS_HOSTNAME=""
   VPS_ENABLE_TAILSCALE_SSH="0"
   VPS_INSTALL_AGENT_CLIS="0"
@@ -36,6 +38,7 @@ Usage:
 Options:
   --host <host>                 Public VPS address for the initial SSH login.
   --login-user <name>           Provider's initial SSH user. Required for bootstrap and dry-run.
+  --login-identity <path>       Private key for the initial SSH login. Optional; use SSH agent/config otherwise.
   --user <name>                 Admin sudo user to create. Default: deploy.
   --pubkey <path>               Public key to install. Default: ~/.ssh/id_ed25519.pub.
   --identity <path>             Private key used to verify Tailnet login. Default: pubkey without .pub.
@@ -52,10 +55,11 @@ Options:
   --dry-run                     Print the phased plan without opening SSH connections.
   -h, --help                    Show this help.
 
-The tool uses --login-user for the first password SSH connection. It does not
-store or pass the login password; OpenSSH and sudo prompt normally. Before that
-first connection, paste the provider SSH host key if available, or press Enter
-to scan the live host key and confirm its fingerprint before pinning it.
+The tool uses --login-user for the first public SSH connection. Pass
+--login-identity when the provider requires a key that is not already available
+through your SSH agent or config. Before that first connection, paste the
+provider SSH host key if available, or press Enter to scan the live host key and
+confirm its fingerprint before pinning it.
 
 The doctor command performs local/read-only checks only. Run it from your
 workstation before bootstrap or on a bootstrapped VPS after setup.
@@ -160,6 +164,15 @@ parse_args() {
         ;;
       --login-user=*)
         VPS_LOGIN_USER="${1#*=}"
+        shift
+        ;;
+      --login-identity)
+        require_option_value "$1" "${2-}" || return 1
+        VPS_LOGIN_IDENTITY="$2"
+        shift 2
+        ;;
+      --login-identity=*)
+        VPS_LOGIN_IDENTITY="${1#*=}"
         shift
         ;;
       --user)
@@ -326,10 +339,29 @@ validate_local_files() {
     error "pass --identity if the private key is not ${VPS_PUBKEY%.pub}"
     return 1
   fi
+
+  if [[ -n "$VPS_LOGIN_IDENTITY" && ! -r "$VPS_LOGIN_IDENTITY" ]]; then
+    error "login identity file is not readable: $VPS_LOGIN_IDENTITY"
+    return 1
+  fi
 }
 
 shell_quote() {
   printf '%q' "$1"
+}
+
+set_initial_ssh_options() {
+  local known_hosts_file="$1"
+
+  VPS_INITIAL_SSH_OPTIONS=(
+    -o "UserKnownHostsFile=$known_hosts_file"
+    -o HostKeyAlias=vps-bootstrap-target
+    -o StrictHostKeyChecking=yes
+  )
+
+  if [[ -n "$VPS_LOGIN_IDENTITY" ]]; then
+    VPS_INITIAL_SSH_OPTIONS+=(-i "$VPS_LOGIN_IDENTITY" -o IdentitiesOnly=yes)
+  fi
 }
 
 generate_sshd_hardening_config() {
@@ -1719,7 +1751,7 @@ run_prepare() {
   printf 'VPS_BOOTSTRAP_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
   printf 'VPS_BOOTSTRAP_FIREWALL=%s\n' "$FIREWALL_BACKEND"
   printf 'VPS_BOOTSTRAP_SWAP=%s\n' "$([[ "$swap_enabled" == "1" ]] && printf 'enabled' || printf 'disabled')"
-  log "prepare phase complete; password/root SSH remains available until local Tailnet login verification passes"
+  log "prepare phase complete; public SSH remains available until local Tailnet login verification passes"
 }
 
 run_harden() {
@@ -1756,15 +1788,23 @@ REMOTE_SCRIPT_BODY
 build_prepare_command() {
   local login_user="$1"
   local host="$2"
+  local login_identity="${3-}"
+  local login_options=""
+
+  if [[ -n "$login_identity" ]]; then
+    login_options="-i $(shell_quote "$login_identity") -o IdentitiesOnly=yes "
+  fi
 
   if [[ "$login_user" == "root" ]]; then
-    printf 'paste or scan host public key -> temporary known_hosts; stream config + script | ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
+    printf 'paste or scan host public key -> temporary known_hosts; stream config + script | ssh -tt %s-o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
+      "$login_options" \
       "$(shell_quote "$login_user@$host")" \
       "$(shell_quote "bash -s")"
     return 0
   fi
 
-  printf 'paste or scan host public key -> temporary known_hosts; upload temporary script with scp; ssh -tt -o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
+  printf 'paste or scan host public key -> temporary known_hosts; upload temporary script with scp; ssh -tt %s-o UserKnownHostsFile=<temporary-known-hosts> -o HostKeyAlias=vps-bootstrap-target -o StrictHostKeyChecking=yes %s %s' \
+    "$login_options" \
     "$(shell_quote "$login_user@$host")" \
     "$(shell_quote "sudo bash <remote-temp-script> prepare")"
 }
@@ -1822,9 +1862,9 @@ confirm_harden_after_manual_ssh_check() {
 
   cat >&2 << PROMPT
 [vps-bootstrap] Automated Tailnet SSH and sudo verification passed.
-[vps-bootstrap] Before password/public SSH is disabled, verify from another terminal:
+[vps-bootstrap] Before public SSH is disabled, verify from another terminal:
 [vps-bootstrap]   ssh -i $(shell_quote "$VPS_IDENTITY") $(shell_quote "$VPS_ADMIN_USER@$tailnet_ip")
-[vps-bootstrap] Continue with hardening now? Type yes to disable password/public SSH:
+[vps-bootstrap] Continue with hardening now? Type yes to disable public SSH:
 PROMPT
   IFS= read -r answer
   case "$answer" in
@@ -1833,7 +1873,7 @@ PROMPT
       ;;
     *)
       cat >&2 << SKIP
-[vps-bootstrap] Leaving password/public SSH available.
+[vps-bootstrap] Leaving public SSH available.
 [vps-bootstrap] To finish later, verify the SSH command above and rerun the same vps-bootstrap command.
 [vps-bootstrap] The next run will re-check completed setup and continue to hardening after confirmation.
 SKIP
@@ -1879,6 +1919,7 @@ run_remote_prepare_with_sudo_login() {
 
   local_script="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap-prepare.XXXXXX")" || return 1
   remote_script="/tmp/vps-bootstrap-prepare-${VPS_LOGIN_USER}.$$.$RANDOM.sh"
+  set_initial_ssh_options "$known_hosts_file"
 
   {
     generate_remote_config_prelude prepare "$public_key"
@@ -1887,9 +1928,7 @@ run_remote_prepare_with_sudo_login() {
 
   scp \
     -q \
-    -o UserKnownHostsFile="$known_hosts_file" \
-    -o HostKeyAlias=vps-bootstrap-target \
-    -o StrictHostKeyChecking=yes \
+    "${VPS_INITIAL_SSH_OPTIONS[@]}" \
     "$local_script" \
     "$VPS_LOGIN_USER@$VPS_HOST:$remote_script" || {
     status=$?
@@ -1902,9 +1941,7 @@ run_remote_prepare_with_sudo_login() {
   remote_command="sudo bash $(shell_quote "$remote_script") prepare; status=\$?; rm -f $(shell_quote "$remote_script"); exit \$status"
   ssh \
     -tt \
-    -o UserKnownHostsFile="$known_hosts_file" \
-    -o HostKeyAlias=vps-bootstrap-target \
-    -o StrictHostKeyChecking=yes \
+    "${VPS_INITIAL_SSH_OPTIONS[@]}" \
     "$VPS_LOGIN_USER@$VPS_HOST" \
     "$remote_command"
 }
@@ -1914,15 +1951,14 @@ run_remote_prepare() {
   local known_hosts_file="$2"
 
   if [[ "$VPS_LOGIN_USER" == "root" ]]; then
+    set_initial_ssh_options "$known_hosts_file"
     {
       generate_remote_config_prelude prepare "$public_key"
       generate_remote_script
     } |
       ssh \
         -tt \
-        -o UserKnownHostsFile="$known_hosts_file" \
-        -o HostKeyAlias=vps-bootstrap-target \
-        -o StrictHostKeyChecking=yes \
+        "${VPS_INITIAL_SSH_OPTIONS[@]}" \
         "$VPS_LOGIN_USER@$VPS_HOST" \
         'bash -s' -- \
         prepare
@@ -1982,6 +2018,7 @@ Configuration:
   admin user: $VPS_ADMIN_USER
   public key: $VPS_PUBKEY
   identity: $VPS_IDENTITY
+  login identity: ${VPS_LOGIN_IDENTITY:-<SSH agent/config>}
   hostname: ${VPS_HOSTNAME:-<server default>}
   public key fingerprint source: ${#public_key} bytes
   Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'requested after OpenSSH verification' || printf 'disabled')
@@ -1991,13 +2028,13 @@ Configuration:
   public web ports 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'enabled' || printf 'disabled')
 
 Phase 1: prepare through $VPS_LOGIN_USER
-  $(build_prepare_command "$VPS_LOGIN_USER" "$VPS_HOST")
+  $(build_prepare_command "$VPS_LOGIN_USER" "$VPS_HOST" "$VPS_LOGIN_IDENTITY")
 
 Phase 2: verify Tailnet key login
   $(build_admin_verify_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
 
 Manual checkpoint:
-  verify SSH in another terminal, then type yes here to disable password/public SSH
+  verify SSH in another terminal, then type yes here to disable public SSH
 
 Phase 3: harden over Tailnet
   $(build_admin_harden_command "$VPS_ADMIN_USER" "<tailnet-ip>" "$VPS_IDENTITY")
@@ -2079,6 +2116,16 @@ doctor_local_inputs() {
     doctor_ok "identity file readable: $VPS_IDENTITY"
   else
     doctor_fail "identity file missing or unreadable: $VPS_IDENTITY"
+  fi
+
+  if [[ -n "$VPS_LOGIN_IDENTITY" ]]; then
+    if [[ -r "$VPS_LOGIN_IDENTITY" ]]; then
+      doctor_ok "login identity file readable: $VPS_LOGIN_IDENTITY"
+    else
+      doctor_fail "login identity file missing or unreadable: $VPS_LOGIN_IDENTITY"
+    fi
+  else
+    doctor_info "initial SSH identity: use SSH agent or config"
   fi
 
   doctor_info "first SSH host key: paste a provider key if available, or scan and confirm the fingerprint when bootstrap prompts"
@@ -2245,13 +2292,13 @@ run_bootstrap() {
   prepare_log="$(mktemp "${TMPDIR:-/tmp}/vps-bootstrap.XXXXXX")"
   trap 'rm -f "$prepare_log" "$known_hosts_file"' RETURN
 
-  printf '[vps-bootstrap] Phase 1: prepare through %s. OpenSSH and sudo may prompt for passwords.\n' "$VPS_LOGIN_USER"
+  printf '[vps-bootstrap] Phase 1: prepare through %s. OpenSSH and sudo follow your local and server auth settings.\n' "$VPS_LOGIN_USER"
   run_remote_prepare "$public_key" "$known_hosts_file" 2>&1 | tee "$prepare_log"
 
   prepare_output="$(cat "$prepare_log")"
   tailnet_ip="$(parse_prepare_tailnet_ip "$prepare_output")"
   if [[ -z "$tailnet_ip" ]]; then
-    error "could not find Tailnet IP in prepare output; public password SSH was not disabled"
+    error "could not find Tailnet IP in prepare output; public SSH was not disabled"
     return 1
   fi
 
