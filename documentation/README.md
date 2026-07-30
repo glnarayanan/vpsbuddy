@@ -50,8 +50,8 @@ appear again so the next run uses an explicit configuration.
 ## Developer CLIs
 
 The CLI choice covers Codex, Grok, and GitHub CLI. If a selected installer
-fails, prepare stops while public SSH stays open and no CLI update timer is
-installed.
+fails, prepare stops while public SSH stays open. Each rerun clears the managed
+CLI update timer, then adds it only when all selected CLIs install.
 
 After setup, log in as the admin user and run:
 
@@ -72,6 +72,12 @@ Helper calls write best-effort JSONL audit events to
 ## Reruns
 
 Reruns are meant to be idempotent. Existing users, keys, active swap, Tailscale
-state, helper files, timers, firewall rules, and SSH config are checked or
-rewritten to the chosen state. Review release notes and use `--dry-run` first on
-any server that has changed since its first bootstrap.
+state, helper files, timers, firewall rules, and SSH config are checked or set
+to the chosen state.
+
+The first rerun after the rename retires files owned by `vps-bootstrap`: helper
+commands, sudoers policy, timers, update files, and SSH drop-ins. SSH changes
+roll back if validation fails. The old audit log stays as history. The generic
+`/usr/local/bin/agent` link is removed only when it points to the Grok binary
+managed by the old script. Review release notes and use `--dry-run` first on any
+server that has changed since its first bootstrap.

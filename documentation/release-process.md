@@ -48,6 +48,24 @@ use appends to `/var/log/vpsbuddy-actions.log`.
 Test at least Ubuntu before an alpha tag. Record the provider image in the
 release notes.
 
+## Rename Migration Smoke Test
+
+On a second disposable VPS, run the last `vps-bootstrap` release with one admin
+name. Then run the current `vpsbuddy` installer and choose a different admin
+name. Keep the provider console open throughout the test.
+
+After the rerun, check that no old privileged state remains:
+
+```bash
+sudo bash -c '! compgen -G "/etc/sudoers.d/90-vps-bootstrap-*" >/dev/null'
+sudo test ! -e /usr/local/sbin/vps-agent-deploy
+sudo test ! -e /etc/systemd/system/vps-os-update.timer
+sudo test ! -e /etc/systemd/system/vps-agent-cli-update.timer
+sudo test ! -e /etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf
+```
+
+Confirm that the new admin still passes the Tailnet login and sudo helper checks.
+
 ## Tag
 
 ```bash

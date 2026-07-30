@@ -15,8 +15,11 @@ ShellCheck is used when present. Otherwise lint falls back to `bash -n`.
 - generated server-script syntax and security-control order
 - swap symlink refusal
 - SSH validation before public SSH removal
-- developer CLI failure stops prepare before update timers
+- generated cleanup paths for old helpers, sudoers, timers, updates, links, and SSH files
+- generated SSH rollback steps for migration validation failures
+- developer CLI failure or opt-out clears the update timer
 - safe shell quoting in the generated phase prelude
 
-These tests do not change a host. Before release, run the guided installer on a
-disposable VPS and follow [release-process.md](release-process.md).
+These tests do not change host files or run `sshd` and systemd failure paths.
+Before release, run the guided installer and rename migration on disposable VPS
+hosts as described in [release-process.md](release-process.md).

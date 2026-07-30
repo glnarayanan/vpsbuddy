@@ -629,6 +629,39 @@ enable_service() {
   return 1
 }
 
+remove_legacy_auto_updates_config() {
+  local legacy_file legacy_contents expected_contents
+
+  legacy_file="/etc/apt/apt.conf.d/20auto-upgrades"
+  [[ -f "$legacy_file" ]] || return 0
+
+  legacy_contents="$(cat "$legacy_file")"
+  expected_contents=$'APT::Periodic::Update-Package-Lists "14";\nAPT::Periodic::Unattended-Upgrade "14";\nAPT::Periodic::AutocleanInterval "14";'
+  if [[ "$legacy_contents" == "$expected_contents" ]]; then
+    rm -f "$legacy_file"
+    log "removed the old vps-bootstrap apt update schedule"
+  fi
+}
+
+remove_legacy_vps_bootstrap_timers() {
+  systemctl disable --now vps-os-update.timer >/dev/null 2>&1 || true
+  systemctl disable --now vps-agent-cli-update.timer >/dev/null 2>&1 || true
+  systemctl stop vps-os-update.service >/dev/null 2>&1 || true
+  systemctl stop vps-agent-cli-update.service >/dev/null 2>&1 || true
+  rm -f \
+    /etc/systemd/system/vps-os-update.service \
+    /etc/systemd/system/vps-os-update.timer \
+    /etc/systemd/system/vps-agent-cli-update.service \
+    /etc/systemd/system/vps-agent-cli-update.timer \
+    /etc/apt/apt.conf.d/52vps-bootstrap-auto-upgrades \
+    /usr/local/sbin/vps-os-update \
+    /usr/local/sbin/vps-agent-cli-update
+
+  if [[ "$PKG_BACKEND" == "apt" ]]; then
+    remove_legacy_auto_updates_config
+  fi
+}
+
 configure_automatic_updates() {
   if [[ "$automatic_updates" != "1" ]]; then
     systemctl disable --now vpsbuddy-os-update.timer >/dev/null 2>&1 || true
@@ -953,6 +986,37 @@ FIREWALL_HELPER_BODY
     /usr/local/sbin/vpsbuddy-service \
     /usr/local/sbin/vpsbuddy-logs \
     /usr/local/sbin/vpsbuddy-firewall
+
+  remove_legacy_vps_agent_helpers
+}
+
+remove_legacy_vps_agent_helpers() {
+  local legacy_sudoers legacy_user home_dir link_target
+
+  rm -f \
+    /usr/local/sbin/vps-agent-sudo-check \
+    /usr/local/sbin/vps-agent-package \
+    /usr/local/sbin/vps-agent-service \
+    /usr/local/sbin/vps-agent-logs \
+    /usr/local/sbin/vps-agent-firewall \
+    /usr/local/sbin/vps-agent-deploy \
+    /usr/local/bin/vps-agent-auth
+
+  [[ -L /usr/local/bin/agent ]] || return 0
+  link_target="$(readlink /usr/local/bin/agent)"
+
+  for legacy_sudoers in /etc/sudoers.d/90-vps-bootstrap-*; do
+    [[ -f "$legacy_sudoers" ]] || continue
+    legacy_user="${legacy_sudoers##*/90-vps-bootstrap-}"
+    [[ "$legacy_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || continue
+    if ! home_dir="$(getent passwd "$legacy_user" | cut -d: -f6)"; then
+      continue
+    fi
+    if [[ "$link_target" == "$home_dir/.grok/bin/agent" ]]; then
+      rm -f /usr/local/bin/agent
+      return 0
+    fi
+  done
 }
 
 write_sudoers_policy() {
@@ -963,6 +1027,7 @@ write_sudoers_policy() {
   generate_sudoers_policy_server "$policy_full" >"$sudoers_file"
   chmod 440 "$sudoers_file"
   visudo -cf "$sudoers_file" >/dev/null
+  rm -f /etc/sudoers.d/90-vps-bootstrap-*
 }
 
 admin_home_dir() {
@@ -1088,6 +1153,8 @@ install_github_cli() {
 install_agent_clis_if_requested() {
   local failures=0
 
+  remove_agent_cli_update_timer
+
   if [[ "$install_agent_clis" != "1" ]]; then
     log "developer CLI installation skipped"
     return 0
@@ -1113,6 +1180,16 @@ install_agent_clis_if_requested() {
   install_agent_auth_helper
   install_agent_cli_update_timer
   print_agent_cli_versions
+}
+
+remove_agent_cli_update_timer() {
+  systemctl disable --now vpsbuddy-cli-update.timer >/dev/null 2>&1 || true
+  systemctl stop vpsbuddy-cli-update.service >/dev/null 2>&1 || true
+  rm -f \
+    /etc/systemd/system/vpsbuddy-cli-update.service \
+    /etc/systemd/system/vpsbuddy-cli-update.timer \
+    /usr/local/sbin/vpsbuddy-cli-update
+  systemctl daemon-reload
 }
 
 install_agent_cli_update_timer() {
@@ -1431,11 +1508,13 @@ validate_effective_sshd_hardening() {
 }
 
 write_sshd_hardening() {
-  local snippet include_backup
+  local snippet include_backup legacy_snippet backup current_backup validation_error index
+  local -a legacy_backups=()
 
   snippet="/etc/ssh/sshd_config.d/00-vpsbuddy-hardening.conf"
   install -d -m 755 /etc/ssh/sshd_config.d
 
+  include_backup=""
   if ! grep -Eiq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
     include_backup="/etc/ssh/sshd_config.vpsbuddy.bak.$(date +%Y%m%d%H%M%S)"
     cp -p /etc/ssh/sshd_config "$include_backup"
@@ -1446,6 +1525,12 @@ write_sshd_hardening() {
     install -m 644 "${snippet}.tmp" /etc/ssh/sshd_config
     rm -f "${snippet}.tmp"
     log "added sshd_config Include; backup: $include_backup"
+  fi
+
+  current_backup=""
+  if [[ -f "$snippet" ]]; then
+    current_backup="$(mktemp /etc/ssh/sshd_config.d/.vpsbuddy-current.XXXXXX)"
+    cp -p "$snippet" "$current_backup"
   fi
 
   cat >"$snippet" <<'SSHD_CONFIG'
@@ -1462,15 +1547,42 @@ SSHD_CONFIG
 
   chmod 644 "$snippet"
 
+  for legacy_snippet in \
+    /etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf \
+    /etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf; do
+    [[ -f "$legacy_snippet" ]] || continue
+    backup="$(mktemp /etc/ssh/sshd_config.d/.vpsbuddy-migration.XXXXXX)"
+    cp -p "$legacy_snippet" "$backup"
+    rm -f "$legacy_snippet"
+    legacy_backups+=("$legacy_snippet" "$backup")
+  done
+
+  validation_error=""
   if ! sshd -t; then
-    rm -f "$snippet"
-    fail "sshd -t failed; removed hardening snippet and left current SSH policy active"
+    validation_error="sshd -t failed"
+  elif ! validate_effective_sshd_hardening; then
+    validation_error="effective sshd settings did not match the hardening policy"
   fi
 
-  if ! validate_effective_sshd_hardening; then
-    rm -f "$snippet"
-    fail "effective sshd settings did not match the hardening policy; public SSH remains open"
+  if [[ -n "$validation_error" ]]; then
+    for ((index = 0; index < ${#legacy_backups[@]}; index += 2)); do
+      mv "${legacy_backups[index + 1]}" "${legacy_backups[index]}"
+    done
+    if [[ -n "$current_backup" ]]; then
+      mv "$current_backup" "$snippet"
+    else
+      rm -f "$snippet"
+    fi
+    if [[ -n "$include_backup" ]]; then
+      mv "$include_backup" /etc/ssh/sshd_config
+    fi
+    fail "$validation_error; restored the prior SSH policy and left public SSH open"
   fi
+
+  for ((index = 1; index < ${#legacy_backups[@]}; index += 2)); do
+    rm -f "${legacy_backups[index]}"
+  done
+  [[ -z "$current_backup" ]] || rm -f "$current_backup"
 
   if ! systemctl reload "$SSHD_SERVICE"; then
     systemctl restart "$SSHD_SERVICE"
@@ -1496,6 +1608,7 @@ run_prepare() {
   validate_hostname_server
   select_platform
   install_required_packages
+  remove_legacy_vps_bootstrap_timers
   install_swap
   enable_service "$SSHD_SERVICE"
   configure_automatic_updates

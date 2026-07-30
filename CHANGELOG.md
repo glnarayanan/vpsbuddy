@@ -9,8 +9,10 @@
   `vpsbuddy` prefix.
 - Developer CLI update timers install only after all selected CLIs succeed.
 - Tailnet confirmation accepts `y` as well as `yes`.
-- Removed personal migration cleanups and the generic `/usr/local/bin/agent`
-  symlink.
+- Reruns retire installer-owned helper, sudoers, timer, update, and SSH files
+  from the old `vps-bootstrap` name.
+- The old generic `/usr/local/bin/agent` link is removed only when it points to
+  the managed Grok binary.
 - Trimmed public documentation to operator-useful material.
 
 ### Added

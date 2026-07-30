@@ -343,15 +343,34 @@ test_generated_server_phase_keeps_security_controls() {
   assert_contains "automatic updates follow operator choice" "$server_script" 'vpsbuddy automatic OS updates disabled'
   assert_contains "automatic update opt-out removes timer" "$server_script" '/etc/systemd/system/vpsbuddy-os-update.timer'
   assert_contains "CLI update timer installs only after successful installs" "$server_script" 'install_agent_cli_update_timer'
+  assert_contains \
+    "CLI timer cleanup runs before installer choice" \
+    "$server_script" \
+    $'install_agent_clis_if_requested() {\n  local failures=0\n\n  remove_agent_cli_update_timer'
   assert_order \
     "CLI auth helper installs after failure check" \
     "$server_script" \
     'one or more selected developer CLIs failed to install' \
     'install_agent_auth_helper'
+  assert_contains "old OS update timer is retired" "$server_script" 'systemctl disable --now vps-os-update.timer'
+  assert_contains "old CLI update timer is retired" "$server_script" 'systemctl disable --now vps-agent-cli-update.timer'
+  assert_contains "old apt update config is handled" "$server_script" '/etc/apt/apt.conf.d/20auto-upgrades'
+  assert_contains "all old sudoers policies are retired" "$server_script" '/etc/sudoers.d/90-vps-bootstrap-*'
+  assert_contains "old admin is read from the sudoers name" "$server_script" "legacy_user=\"\${legacy_sudoers##*/90-vps-bootstrap-}\""
+  assert_not_contains "sudoers cleanup is not tied to the new admin" "$server_script" "90-vps-bootstrap-\$admin_user"
+  assert_contains "old unsafe deploy helper is retired" "$server_script" '/usr/local/sbin/vps-agent-deploy'
+  assert_contains "old SSH drop-in is retired" "$server_script" '/etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf'
+  assert_contains "old SSH policy is restored on validation failure" "$server_script" 'restored the prior SSH policy and left public SSH open'
+  assert_contains "main SSH config is restored on validation failure" "$server_script" "mv \"\$include_backup\" /etc/ssh/sshd_config"
+  assert_contains \
+    "prepare retires old timers before installing swap" \
+    "$server_script" \
+    $'install_required_packages\n  remove_legacy_vps_bootstrap_timers\n  install_swap'
   assert_contains "root admin is rejected on the server" "$server_script" 'root cannot be the managed admin user'
   assert_contains "UID 0 aliases are rejected" "$server_script" 'managed admin user must not have UID 0'
   assert_contains "prepare disables existing Tailscale SSH" "$server_script" 'tailscale set --ssh=false'
-  assert_not_contains "generic agent symlink is not created" "$server_script" '/usr/local/bin/agent'
+  assert_not_contains "generic agent symlink is not created" "$server_script" "ln -sf \"\$home_dir/.grok/bin/agent\" /usr/local/bin/agent"
+  assert_contains "managed generic agent symlink is retired" "$server_script" "[[ \"\$link_target\" == \"\$home_dir/.grok/bin/agent\" ]]"
   assert_order \
     "SSH policy is validated before public SSH closes" \
     "$server_script" \

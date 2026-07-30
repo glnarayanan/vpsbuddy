@@ -26,6 +26,9 @@ writes the selected sudo policy, installs root-owned helpers and audit logging,
 sets up swap when requested, joins Tailscale, installs selected developer CLIs,
 sets selected update timers, and enables the host firewall while keeping public
 SSH open.
+Prepare also retires known files from the old `vps-bootstrap` name. It removes
+only fixed installer paths. It keeps the old audit log and removes the generic
+agent link only when that link points to the old managed Grok binary.
 
 It then checks the admin user's sudo helper locally and waits while the operator
 tests OpenSSH over the Tailnet from another terminal.
@@ -34,8 +37,10 @@ tests OpenSSH over the Tailnet from another terminal.
 
 Harden runs only after the operator confirms the Tailnet login. It writes
 `/etc/ssh/sshd_config.d/00-vpsbuddy-hardening.conf`, validates with `sshd -t`
-and `sshd -T`, reloads SSH, writes the sudo policy again, then removes public
-SSH from UFW or firewalld.
+and `sshd -T`, then reloads SSH. When an old hardening drop-in exists, harden
+backs it up before validation and restores the prior SSH policy if validation
+fails. It then writes the sudo policy again and removes public SSH from UFW or
+firewalld.
 
 The final SSH policy disables password authentication and root login. OpenSSH
 remains available on the Tailscale interface for the admin user.
