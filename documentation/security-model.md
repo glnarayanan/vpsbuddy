@@ -1,84 +1,98 @@
 # Security Model
 
-The bootstrap process optimizes for avoiding accidental lockout while ending with a narrow SSH exposure.
+The bootstrap aims to avoid lockout while ending with a narrow SSH surface.
 
-## Final State
+## Trust Before Bootstrap
 
-- SSH password authentication is disabled.
-- Root SSH login is disabled.
-- Public key authentication is enabled.
-- SSH is allowed only on the Tailscale interface.
-- Public TCP 80/443 remain open by default for hosted web applications.
-- Unsolicited inbound traffic is denied by the host firewall.
-- The admin user has passwordless sudo by default only for root-owned `vps-agent-*` helpers so common agentic operations can work without raw broad root primitives.
-- Codex CLI, Grok CLI, and GitHub CLI are installed only after the operator
-  selects them in the interactive prompt or passes `--install-agent-clis`, and
-  authentication is deferred to the post-setup `vps-agent-auth` helper. These
-  installers are best-effort: an upstream CLI installer outage must not abort
-  the security bootstrap. `--skip-agent-clis` makes the unattended choice to
-  skip them.
-- Codex and Grok are updated every two days by `vps-agent-cli-update.timer` only when agent CLIs are installed.
-- OS packages are updated every two weeks by `vps-os-update.timer`; apt hosts also receive fourteen-day `unattended-upgrades` periodic configuration.
-- Swap is active by default. When no active swap exists, prepare creates a root-owned `0600` `/swapfile`, formats and enables it, and adds it to `/etc/fstab`. The default size is `2G` and can be changed with `--swap-size`; `--no-swap` skips it.
+The operator logs into the VPS before running this script. The provider account,
+initial SSH host-key check, private key storage, and first login are outside the
+script. Use the provider console and your normal SSH host-key checks.
 
-## Phased Rollback Protection
+The script runs as root on the VPS. It never receives a local private key.
 
-Before the first remote phase, the local CLI pins the VPS SSH host key in a temporary `known_hosts` file. If the provider exposes the host public key, the operator can paste it. If not, the CLI scans the live SSH host key, prints the key and fingerprint, and requires explicit confirmation before pinning it. The script then uses strict host-key checking for the rest of the run.
+## Explicit Configuration
 
-The first remote phase connects as the required `--login-user`. The local CLI
-uploads a temporary generated prepare script, runs it through terminal-attached
-SSH, and removes it. Root runs it with `bash`; non-root sudo-capable image users
-run it with `sudo bash`. Keeping the script in a file leaves SSH terminal input
-free for prompts and avoids waiting for end-of-file after prepare completes. The
-script creates or reuses the admin user, installs the selected `--pubkey`,
-installs bounded sudo helpers, installs Tailscale, joins the Tailnet, enables
-baseline services, optionally installs selected developer CLIs, and configures
-the firewall with temporary public SSH still allowed. It does not enable
-Tailscale SSH before local Tailnet OpenSSH verification, because Tailscale SSH
-ACLs can block that verification path.
+The guided setup asks for the admin user, public key, hostname choice, swap,
+web ports, developer CLIs, automatic updates, sudo policy, and Tailscale SSH.
+It prints a summary and asks before changing the host.
 
-The local CLI then connects to the Tailnet IP as the new admin user and runs `sudo -n /usr/local/sbin/vps-agent-sudo-check`. After that automated check succeeds, the CLI asks the operator to verify SSH from another terminal and type `yes` before the harden phase runs over the Tailnet connection.
+No admin name or swap size is assumed. Existing active swap is kept.
 
-If the operator does not confirm hardening, the original public SSH path remains open and the script exits successfully. A later run repeats the idempotent prepare checks and can continue to the hardening confirmation.
+## Prepare Phase
 
-The prepare phase temporarily grants broad passwordless sudo so the verified Tailnet harden phase can run through `sudo bash -s`. The harden phase then writes the final requested sudo policy: bounded helper access by default, or `NOPASSWD:ALL` only when `--full-sudo` is passed.
+Prepare:
 
-The harden phase also writes `/etc/ssh/sshd_config.d/90-vps-bootstrap-hardening.conf`, validates it with `sshd -t`, reloads SSH, and removes public SSH from UFW or firewalld.
+- installs required OS packages
+- creates or reuses the admin user
+- installs the selected public key
+- writes the selected sudo policy
+- installs root-owned helpers and audit logging
+- sets up swap when requested
+- installs and joins Tailscale
+- installs selected developer CLIs
+- sets selected update timers
+- enables the host firewall while keeping public SSH open
+
+The script checks the new admin user's sudo helper locally. It then waits while
+the operator tests OpenSSH over the Tailnet from another terminal.
+
+## Harden Phase
+
+Harden runs only after the operator types `yes` to confirm the Tailnet login.
+It writes `/etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf`, validates
+the full SSH config with `sshd -t`, checks the effective policy with `sshd -T`,
+reloads SSH, writes the sudo policy again, then removes public SSH from UFW or
+firewalld.
+
+The final SSH policy disables password authentication and root login. OpenSSH
+remains available on the Tailscale interface for the admin user.
+
+If prepare, the local sudo check, or manual Tailnet verification fails, harden
+does not run and public SSH stays open.
+
+## Sudo and Helpers
+
+Scoped sudo is the normal choice. It allows only root-owned
+`vps-agent-*` helpers. Raw package managers, `systemctl`, generic file tools,
+and user-level developer CLIs are not direct passwordless sudo targets.
+
+Full passwordless sudo is applied only when the operator chooses it.
+
+Each helper writes a best-effort JSONL event to
+`/var/log/vps-agent-actions.log`. A logging error does not replace the helper's
+real exit code.
+
+## Swap
+
+When active swap exists, prepare leaves it alone. For a requested `/swapfile`,
+the script rejects symlinks, uses mode `0600`, enables the file, and adds it to
+`/etc/fstab`. It does not overwrite an unusable existing file.
 
 ## Developer CLI Credentials
 
-When agent CLIs are selected by the prompt or `--install-agent-clis`,
-`vps-agent-auth` runs native auth flows where available and prints setup checks
-for API-key based tools after bootstrap is complete. Codex uses OpenAI's
-standalone Linux installer with `CODEX_NON_INTERACTIVE=1`, Grok uses xAI's
-official Linux installer, and GitHub CLI uses GitHub's signed Linux package
-repositories for apt or rpm hosts. Homebrew is not installed on fresh VPS
-images by default, so it is not the server bootstrap default.
+Codex, Grok, and GitHub CLI are installed only when selected. Bootstrap does not
+ask for or store their tokens. The admin user completes native auth after setup
+with `vps-agent-auth`.
 
-The bootstrap script does not accept, upload, or store raw agent CLI tokens, API keys, or GitHub private keys. Each CLI handles its own auth state or configuration:
+The CLI install and update paths trust official mutable upstream endpoints.
+That supply-chain risk remains. The scoped sudo policy does not grant the
+installed user-level CLIs direct root access.
 
-- Codex auth through `codex login`.
-- Grok auth through `grok login`, or `XAI_API_KEY` in non-browser environments.
-- GitHub CLI auth through `gh auth login --hostname github.com --git-protocol ssh`.
+## Updates
 
-The admin user receives passwordless sudo by default for these root-owned helpers only: `vps-agent-sudo-check`, `vps-agent-package`, `vps-agent-service`, `vps-agent-logs`, `vps-agent-firewall`, `vps-agent-deploy`, `vps-agent-cli-update`, and `vps-os-update`. Raw package managers, `systemctl`, `npm`, file ownership/write tools, and user-level Codex/Grok binaries are not directly sudo-allowed by the default policy. Use `--full-sudo` only when a server intentionally needs broad `NOPASSWD:ALL`.
+When automatic OS updates are selected, `vps-os-update.timer` runs every two
+weeks. Apt hosts also receive the matching unattended-upgrades setup.
 
-Each `vps-agent-*` helper writes a best-effort JSONL event to `/var/log/vps-agent-actions.log`. Events include timestamp, helper name, invoking user, action, sanitized arguments, and exit code. Logging failures do not override the helper's real result.
-
-## Update Automation
-
-When agent CLIs are selected, `vps-agent-cli-update.timer` runs every two days
-with persistence across reboots. It reruns OpenAI's Codex installer in
-non-interactive mode and runs `grok update` as the admin user.
-
-The Codex, Grok, and Tailscale installer paths intentionally trust official mutable upstream installer/update endpoints because version-pinned installers are not available in this script. The bootstrap logs that accepted supply-chain trust boundary when those installers or updates run, and the default sudo policy does not give the installed user-level CLIs direct passwordless root access.
-
-`vps-os-update.timer` runs every two weeks with persistence across reboots. It uses `unattended-upgrade -d` on apt hosts when available, `dnf -y upgrade` on dnf hosts, and `yum -y update` on yum hosts.
+When developer CLIs are selected, `vps-agent-cli-update.timer` runs every two
+days.
 
 ## Tailscale SSH
 
-OpenSSH over the Tailnet is the default model. `--enable-tailscale-ssh` defers `tailscale set --ssh` until after automated Tailnet OpenSSH verification and the manual hardening checkpoint. The CLI asks for a second confirmation before enabling it, because Tailnet ACL SSH rules must permit the user and node or Tailscale SSH can block normal OpenSSH over the Tailnet.
+OpenSSH over the Tailnet is the base path. Tailscale SSH is optional and should
+be selected only after the Tailnet SSH ACL rules are ready. A wrong ACL can
+block access even after OpenSSH verification.
 
-## Provider Firewalls
+## Provider Firewall
 
-The host firewall cannot override a provider firewall that already blocks traffic, and a provider firewall can still expose TCP 22 if it is configured loosely. Mirror the final host policy at the provider layer.
+Host rules do not change provider firewall rules. Mirror the final policy at
+the provider: no public TCP 22, and public TCP 80/443 only when needed.

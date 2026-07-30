@@ -1,66 +1,36 @@
 # Comparison
 
-`vps-bootstrap` is a fresh-server security bootstrap. It prepares a VPS so you
-can safely continue with your preferred deployment approach.
+`vps-bootstrap` is a guided Bash script run inside a fresh VPS. Its job is the
+host baseline: admin access, Tailscale, SSH, firewall, swap, sudo helpers,
+updates, and optional developer CLIs.
 
-It is deliberately smaller than a hosting platform.
+It is not:
 
-## What It Is
+- a hosting panel
+- a container or app scheduler
+- a certificate or domain manager
+- a long-running control plane
+- a fleet configuration system
+- a compliance framework
 
-- A local Bash CLI run from your workstation.
-- A phased hardening flow for fresh VPS hosts.
-- A way to move SSH access from temporary public login to
-  Tailnet-first admin access.
-- A baseline for firewall posture, bounded sudo helpers, update timers, and
-  developer CLI installation.
-- A tool that leaves application architecture decisions to the operator.
+## Hosting Panels
 
-## What It Is Not
+Dokploy and Coolify manage apps. `vps-bootstrap` prepares the host below that
+layer. You can run it first, verify access and firewall state, then install a
+panel.
 
-- Not a Dokploy or Coolify clone.
-- Not a PaaS.
-- Not a web dashboard.
-- Not a container scheduler.
-- Not a reverse proxy or certificate manager.
-- Not a database, queue, or app rollback manager.
-- Not a replacement for provider firewall configuration.
-- Not a compliance hardening framework.
+## Cloud-Init and Ansible
 
-## Compared With Hosting Panels
+Cloud-init and Ansible handle broad provisioning and fleets.
+`vps-bootstrap` handles one guided fresh-server flow with a manual checkpoint
+before public SSH closes.
 
-| Area                       | `vps-bootstrap`               | Dokploy/Coolify-style panels   |
-| -------------------------- | ----------------------------- | ------------------------------ |
-| Primary job                | Secure the fresh VPS baseline | Deploy and manage applications |
-| Interface                  | Local CLI                     | Web UI/control plane           |
-| Runtime footprint          | No ongoing app control plane  | Long-running platform services |
-| App deployment             | Outside scope                 | Core feature                   |
-| TLS/domain routing         | Outside scope                 | Core feature                   |
-| SSH hardening              | Core feature                  | Usually adjacent setup         |
-| Tailnet-first SSH          | Core feature                  | Depends on user setup          |
-| Provider firewall guidance | Documented expectation        | Usually external               |
+## Manual Setup
 
-These tools can be complementary. A common path is to run `vps-bootstrap` first,
-verify the final SSH/firewall posture, then install a deployment platform if
-that is the right application layer.
+Manual setup gives full control. This script makes the risky order repeatable:
 
-## Compared With Cloud-Init or Ansible
-
-Cloud-init and Ansible are broader provisioning systems. `vps-bootstrap` is a
-narrow operator workflow with built-in phase ordering for one risky transition:
-moving a fresh VPS from public SSH to verified Tailnet admin SSH
-without locking yourself out.
-
-Use cloud-init or Ansible when you need general fleet provisioning. Use
-`vps-bootstrap` when you want this specific security-first first-server flow and
-you want to inspect it locally before it touches a host.
-
-## Compared With Manual Setup
-
-Manual hardening gives maximum control, but it is easy to get the order wrong.
-The project exists to make the safe order repeatable:
-
-1. Pin the initial host identity.
-2. Prepare the admin account and Tailnet access.
-3. Verify the new path.
-4. Harden SSH and firewall exposure.
-5. Authenticate optional developer CLIs after the server is stable.
+1. collect explicit choices
+2. prepare while public SSH stays open
+3. test admin access over the Tailnet
+4. harden SSH and firewall
+5. authenticate selected developer CLIs

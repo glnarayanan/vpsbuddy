@@ -1,160 +1,85 @@
 # FAQ
 
-## Is this a Dokploy or Coolify alternative?
+## Where do I run it?
 
-No. `vps-bootstrap` does not deploy apps or run a hosting control plane. It
-secures the fresh VPS baseline underneath whatever app deployment approach you
-choose later.
-
-## Can I run it on an existing production server?
-
-That is not the intended alpha path. The script is designed for fresh VPS hosts
-where the provider's initial SSH user is reachable by key or password, and there
-is no existing application state to preserve.
-
-For an existing server, inspect dry-run output and the generated behavior first.
-You are responsible for understanding how it interacts with existing users,
-SSH, firewall, sudo, and service configuration.
-
-## Does the VPS need a checkout?
-
-No. Run `bin/vps-bootstrap` from your workstation. The CLI sends the generated
-remote script over SSH, so the VPS needs no checkout or private key. Do not run
-only the generated remote prepare payload; it ends after the prepare phase by
-design.
-
-An interactive server shell can run the top-level CLI if you deliberately place
-the checkout and private key there, but that is optional.
-
-## What if the provider disables password SSH at provisioning?
-
-Pass the provider key with `--login-identity`:
+Log into the VPS first, then run the installer there:
 
 ```bash
-bin/vps-bootstrap \
-  --host 203.0.113.10 \
-  --login-user root \
-  --login-identity ~/.ssh/provider_key \
-  --pubkey ~/.ssh/id_ed25519.pub \
-  --identity ~/.ssh/id_ed25519
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/server-setup-scripts/main/install.sh | bash
 ```
 
-That key is used for the initial public SSH and SCP steps. `--identity` remains
-the private key used for the managed admin user over the Tailnet. If the provider
-key is already in your SSH agent or SSH config, `--login-identity` is optional.
+The laptop only makes the first SSH connection and the later Tailnet login
+test. It does not run the bootstrap.
 
-## What if my provider does not show the server SSH host public key?
+## Does the VPS need a checkout or GitHub CLI?
 
-The first connection is the riskiest one. If the provider shows the OpenSSH host
-public key, paste it. If it does not, press Enter at the prompt; the CLI scans
-the live SSH host key, shows the key and fingerprint, and asks you to type `yes`
-before pinning it for bootstrap.
+No. `install.sh` downloads the entrypoint, library, and two templates into a
+temporary directory, runs them, and removes them.
 
-The scanned-key path is trust-on-first-use. It is still pinned before the first
-SSH login and reused for the rest of the run, but it cannot prove provider
-identity by itself. Do not paste your local user public key, a private key, or
-only a SHA256 fingerprint.
+## What if the provider only allows key login as root?
 
-## Should my local SSH key already be on the VPS?
+Log in with that key as usual. When root's `authorized_keys` contains a valid
+key, the guided setup shows its fingerprint and asks whether to reuse it for the
+new admin user. You can reject it and paste another public key.
 
-No. `--pubkey` points to your local public key, and the prepare phase installs it
-for the admin user. If that exact key is already present, the script logs that
-and continues.
+The script never needs the private key.
 
-## Why keep public SSH open during the prepare phase?
+## Does it set up swap?
 
-To avoid lockout. The original public SSH path remains available until
-the script verifies that the new admin user can SSH over the Tailnet and run the
-bounded sudo check, and until you confirm that you manually verified SSH from
-another terminal. Only then does the harden phase remove public SSH.
+Yes, when you ask it to. If no active swap exists, enter a size such as `4G` or
+enter `none`. There is no default size. Active swap is left unchanged.
 
-## What if I am not ready to disable public SSH?
+## Why does public SSH stay open during prepare?
 
-Answer anything other than `yes` at the hardening prompt. The script leaves the
-original public SSH path available and exits cleanly. Rerun the same command
-after you have verified SSH; completed prepare work is checked again and reused.
+The new admin user and Tailnet path must work first. After prepare, the script
+checks scoped sudo locally and waits while you test the printed Tailnet SSH
+command from another terminal.
 
-## Does it store my API keys or CLI tokens?
+## Do I need to do anything after the Tailnet test?
 
-No. Bootstrap does not accept, upload, or store raw Codex, Grok, GitHub, or API
-tokens. When optional agent CLIs are installed, developer CLI auth happens after
-setup through `vps-agent-auth`, using native CLI auth flows where available.
+Yes. Return to the first terminal and type `yes`. Only then does the script
+harden SSH and remove public TCP 22.
 
-## Why install agent CLIs at all?
+## What if I do not type yes?
 
-Some operator workflows use Codex CLI, Grok CLI, and GitHub CLI directly on the
-server. An interactive bootstrap asks whether to install them before the first
-SSH connection. Answer `yes` for servers that need them:
+The script states that setup is paused and leaves public SSH open. Rerun it
+later. Prepare is designed to reuse valid state.
 
-```bash
-bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user
-```
+## How do reruns work?
 
-For unattended runs, use `--install-agent-clis` or `--skip-agent-clis` to make
-the choice explicit.
+Each run asks for the configuration again. Existing users, keys, swap,
+Tailscale state, helper files, timers, SSH config, and firewall rules are
+checked or set to the chosen state.
 
-## Does bootstrap set up swap?
+Use `--dry-run` before applying a newer script to a server that has changed.
 
-Yes. During prepare, it keeps active swap as-is. If no active swap exists, it
-creates and enables a root-owned `0600` `/swapfile` and adds it to `/etc/fstab`.
-The default size is `2G`; use `--swap-size 4G` to change it or `--no-swap` to
-skip swap setup. An unusable existing `/swapfile` is not overwritten.
+## Are Codex, Grok, and GitHub CLI installed?
 
-## What does the default sudo policy allow?
+Only when you answer yes. If a selected CLI fails to install, prepare stops
+while public SSH stays open. Fix the cause or rerun and answer no. Authenticate
+after setup with `vps-agent-auth`.
 
-The admin user gets passwordless sudo only for root-owned `vps-agent-*` helper
-commands by default. Raw package managers, `systemctl`, generic file-write
-tools, and user-level agent binaries are not directly passwordless sudo targets.
+## Does bootstrap store tokens?
 
-Use `--full-sudo` only when you intentionally want broad `NOPASSWD:ALL`.
+No. It does not ask for API keys, CLI tokens, GitHub private keys, or SSH
+private keys.
 
-Each helper writes a best-effort JSONL audit event to
-`/var/log/vps-agent-actions.log` with timestamp, helper name, invoking user,
-action, sanitized arguments, and exit code.
+## What does scoped sudo allow?
 
-## What does `doctor` check?
+It allows passwordless use of the root-owned `vps-agent-*` helpers. Choose full
+passwordless sudo only when the server needs `NOPASSWD:ALL`.
 
-`bin/vps-bootstrap doctor` is read-only. From a workstation it checks local key
-inputs, command availability, host-key expectations, planned sudo/web/agent CLI
-settings, and provider firewall reminders. On a bootstrapped VPS it also reports
-detected helpers, sudo policy shape, timers, SSH hardening, firewall status,
-Tailnet status, and listening ports.
+## Are ports 80 and 443 open?
 
-## Why are public TCP 80 and 443 open by default?
+Only when you answer yes. Provider firewall rules must be changed separately.
 
-The default assumes the VPS may host web applications after bootstrap. Use
-`--no-web` or `--web=false` for private-only servers.
+## Does Tailscale SSH replace OpenSSH?
 
-Provider firewalls must be configured separately. See
-[provider-firewall-checklist.md](provider-firewall-checklist.md).
+OpenSSH over the Tailnet is the base path. Tailscale SSH is optional. Select it
+only when the Tailnet SSH ACL rules are ready.
 
-## Does Tailscale SSH replace OpenSSH here?
+## Can I run this on an existing production server?
 
-OpenSSH over the Tailnet is the default access model. `--enable-tailscale-ssh`
-is deferred until after OpenSSH verification and the manual hardening
-checkpoint, then the CLI asks for confirmation before running `tailscale set
---ssh`. Configure Tailnet ACL SSH rules first; otherwise Tailscale SSH can block
-normal OpenSSH over the Tailnet.
-
-## What should I test before trusting a release?
-
-Run:
-
-```bash
-make check
-bin/vps-bootstrap --host 203.0.113.10 --hostname smoke-01 --dry-run
-```
-
-For release confidence, use a disposable fresh VPS and follow
-[release-process.md](release-process.md).
-
-## What happens if Tailscale login fails?
-
-The harden phase should not run because Tailnet verification cannot succeed.
-Public SSH remains available so you can repair or destroy the disposable host.
-
-## Which operating systems are supported?
-
-The alpha target is fresh systemd-based Ubuntu/Debian apt hosts and
-Fedora/RHEL-family dnf/yum hosts. See
-[compatibility-matrix.md](compatibility-matrix.md).
+That is not the intended alpha use. The script rewrites SSH, sudo, firewall,
+timer, and helper state. Use a fresh VPS or audit the code and dry-run output
+against the server's current state first.

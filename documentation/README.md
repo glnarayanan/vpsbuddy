@@ -1,111 +1,99 @@
-# Advanced Usage
+# Operator Guide
 
-This file is the operator reference for `vps-bootstrap`. The public overview and
-quick start live in [../README.md](../README.md).
-
-## Common Commands
-
-Inspect a bootstrap plan without opening SSH:
+Run `vps-bootstrap` after logging into a fresh VPS. The public bootstrap command
+downloads one source archive to a temporary directory and removes it when the
+run ends:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --dry-run
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/server-setup-scripts/main/install.sh | bash
 ```
 
-Run a read-only readiness audit:
+From a checkout already present on the VPS, run:
 
 ```bash
-bin/vps-bootstrap doctor --host 203.0.113.10
+sudo bin/vps-bootstrap
 ```
 
-Bootstrap a fresh VPS with the default minimal posture:
+Use `--dry-run` to answer the same prompts and print the chosen configuration
+without changing the host.
+
+## SSH Key Input
+
+When the current login account has a valid key in `~/.ssh/authorized_keys`, the
+script shows its fingerprint and asks whether to install that key for the new
+admin user. This covers provider images that add a key for root and disable
+password login.
+
+If no valid key is found, or you reject it, paste one OpenSSH public key. The
+script never asks for a private key.
+
+## Swap
+
+If active swap exists, the script leaves it unchanged. Otherwise it asks for a
+size such as `4G`, or `none`.
+
+For a requested swap file, prepare:
+
+- refuses a symlink at `/swapfile`
+- creates or safely reuses `/swapfile`
+- sets mode `0600`
+- runs `mkswap` and `swapon`
+- adds one `/swapfile` entry to `/etc/fstab`
+
+## Prepare and Harden
+
+Prepare is safe to rerun. It checks or updates the chosen user, key, packages,
+swap, services, Tailscale, helpers, CLIs, and firewall rules. It keeps public
+SSH open.
+
+After prepare, the script runs the scoped sudo check as the new admin user. It
+then prints the Tailnet SSH command and waits. Open another terminal, test that
+command, return to the first session, and type `yes`.
+
+Harden then:
+
+- writes and validates the OpenSSH hardening file
+- writes the chosen sudo policy
+- limits SSH to `tailscale0`
+- applies the chosen public web rules
+- optionally enables Tailscale SSH
+
+If you do not type `yes`, the script says setup is paused and leaves public SSH
+open. Rerun the installer later. The prompts appear again so the next run uses
+an explicit configuration.
+
+## Developer CLIs
+
+The CLI choice covers Codex, Grok, and GitHub CLI. If a selected installer
+fails, prepare stops while public SSH stays open.
+
+After setup, log in as the admin user and run:
 
 ```bash
-bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01
+vps-agent-auth --all
+vps-agent-auth --status
 ```
 
-Reuse the provider's initial SSH user as the managed admin user:
+The bootstrap does not accept or copy API keys, tokens, or SSH private keys.
 
-```bash
-bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --user your-provider-user --hostname app-01
-```
+## Sudo
 
-Bootstrap an agent-ready host with optional developer CLIs:
+The scoped choice grants passwordless access only to root-owned
+`vps-agent-*` helpers under `/usr/local/sbin`. The full choice writes
+`NOPASSWD:ALL`.
 
-```bash
-bin/vps-bootstrap --host 203.0.113.10 --login-user your-provider-user --hostname app-01 --install-agent-clis
-```
+Helper calls write best-effort JSONL audit events to
+`/var/log/vps-agent-actions.log`.
 
-## Useful Options
+## Reruns and Upgrades
 
-- `--login-user <name>`: provider's initial SSH user. Required for bootstrap and
-  dry-run.
-- `--login-identity <path>`: private key for the initial public SSH login. Use
-  this when the provider key is not already available through your SSH agent or
-  SSH config.
-- `--user <name>`: admin sudo user to create or reuse after login. Defaults to
-  `deploy`.
-- `--pubkey <path>`: public key to install. Defaults to
-  `~/.ssh/id_ed25519.pub`.
-- `--identity <path>`: private key used for Tailnet verification. Defaults to
-  the public key path without `.pub`.
-- `--hostname <name>`: hostname to set on the VPS and use for Tailscale.
-- `--enable-tailscale-ssh`: request Tailscale SSH after OpenSSH over the
-  Tailnet has been verified. The CLI asks for confirmation before enabling it
-  because Tailnet ACL SSH rules are still required.
-- `--install-agent-clis`: best-effort install of Codex CLI, Grok CLI, GitHub
-  CLI, `vps-agent-auth`, and the agent CLI update timer without asking.
-- `--skip-agent-clis`: skip those installs without asking.
-- `--swap-size <size>`: create this swap size when no active swap exists.
-  Accepts a positive whole number followed by `M` or `G`. Defaults to `2G`.
-- `--no-swap`: skip swap setup.
-- `--no-web` or `--web=false`: close public TCP 80/443 for private-only hosts.
-- `--full-sudo`: use broad `NOPASSWD:ALL` instead of the default bounded helper
-  policy.
+Reruns are meant to be idempotent. Existing users, keys, active swap, Tailscale
+state, helper files, timers, firewall rules, and SSH config are checked or
+rewritten to the chosen state.
 
-## Operator Notes
+Rerunning a newer installer applies the current script. Review release notes and
+use `--dry-run` first on any server that has changed since its first bootstrap.
+The tool is for fresh-server baselines, not general configuration management.
 
-- If the provider shows the VPS SSH host public key, paste it when prompted. If
-  it does not, press Enter to scan the live SSH host key, review the fingerprint,
-  and type `yes` to pin it for bootstrap. This is the server host key, not your
-  local user key and not only a SHA256 fingerprint.
-- `--pubkey` is your local login public key to install for the admin user. It is
-  expected to be absent on a fresh VPS before the prepare phase.
-- The prepare phase temporarily keeps the original public SSH path available.
-  The harden phase runs only after Tailnet admin SSH and bounded sudo
-  verification pass and you type `yes` after manually checking SSH from another
-  terminal.
-- The normal path is to run the top-level CLI from a workstation. The VPS needs
-  no checkout or private key. The CLI uploads a temporary generated prepare
-  script, runs it through terminal-attached SSH, and removes it. This keeps
-  interactive prompts separate from the script input. Do not run only the
-  generated remote prepare payload.
-- If neither agent CLI flag is set, the local CLI asks whether to install the
-  developer CLIs before the first SSH connection. Answering `yes` selects the
-  same install path as `--install-agent-clis`.
-- An interactive server shell can run the top-level CLI only when you have
-  deliberately placed the checkout and private key there; this is optional.
-- For a provider that installs a key and disables password SSH at provisioning,
-  pass `--login-identity ~/.ssh/provider_key`. This key is used for the initial
-  SSH and SCP steps only; `--identity` remains the managed admin key.
-- For non-root `--login-user` values, the CLI uploads a temporary prepare script
-  and then runs it with interactive `sudo`. The login user still needs usable
-  sudo access.
-- If you decline hardening, rerun the same command later. The prepare phase is
-  safe to repeat and will re-check existing user, key, Tailscale, and sudo state
-  before asking again.
-- Prepare creates `/swapfile` with mode `0600` when no active swap exists,
-  enables it, and adds it to `/etc/fstab`. A valid existing swap file is reused;
-  an unusable `/swapfile` is never overwritten.
-- Default passwordless sudo is limited to root-owned `vps-agent-*` helpers under
-  `/usr/local/sbin`.
-- Helper calls append best-effort JSONL audit events to
-  `/var/log/vps-agent-actions.log`.
-- Developer CLI authentication is never collected during bootstrap. When
-  agent CLIs are selected, authenticate later with `vps-agent-auth`.
-- Codex and Grok use their official standalone Linux installers. GitHub CLI
-  uses GitHub's signed apt/rpm package repositories on Linux rather than adding
-  Homebrew to the server.
-
-See [security-model.md](security-model.md), [threat-model.md](threat-model.md),
-and [release-process.md](release-process.md) before changing bootstrap or
-hardening behavior.
+See [security-model.md](security-model.md) and
+[release-process.md](release-process.md) before changing the phase order.

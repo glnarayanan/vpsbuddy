@@ -1,61 +1,51 @@
 # Compatibility Matrix
 
-This matrix describes intended `v0.1.0-alpha` compatibility for fresh VPS
-images. It is not a guarantee that every provider image has been smoke-tested.
+This matrix describes the intended alpha targets. Provider image changes can
+still affect package names, SSH includes, services, and firewall behavior.
 
 ## Host Operating Systems
 
-| OS family                    | Package path | Intended status | Notes                                                             |
-| ---------------------------- | ------------ | --------------- | ----------------------------------------------------------------- |
-| Ubuntu LTS                   | apt          | Primary target  | Best first smoke-test target.                                     |
-| Debian stable                | apt          | Intended        | Should follow the apt path; image defaults vary by provider.      |
-| Fedora Server                | dnf          | Intended        | Requires systemd and firewalld-compatible behavior.               |
-| AlmaLinux                    | dnf/yum      | Intended        | RHEL-family path; provider images may differ.                     |
-| Rocky Linux                  | dnf/yum      | Intended        | RHEL-family path; provider images may differ.                     |
-| RHEL-compatible derivatives  | dnf/yum      | Best effort     | Verify package names, firewalld state, and SSH include support.   |
-| Arch, Alpine, NixOS, FreeBSD | none         | Unsupported     | Package manager and service assumptions do not match this script. |
+| OS family                    | Package path | Status         |
+| ---------------------------- | ------------ | -------------- |
+| Ubuntu LTS                   | apt          | Primary target |
+| Debian stable                | apt          | Intended       |
+| Fedora Server                | dnf          | Intended       |
+| AlmaLinux                    | dnf or yum   | Intended       |
+| Rocky Linux                  | dnf or yum   | Intended       |
+| Other RHEL-family images     | dnf or yum   | Best effort    |
+| Arch, Alpine, NixOS, FreeBSD | none         | Unsupported    |
 
-## Required Host Capabilities
+## Required VPS State
 
-| Capability                | Required | Why                                                                    |
-| ------------------------- | -------- | ---------------------------------------------------------------------- |
-| Initial SSH login         | Yes      | Use a provider key or password; pass `--login-identity` for an explicit key. |
-| systemd                    | Yes      | Timers and service management assume systemd.                 |
-| OpenSSH server             | Yes      | The hardening phase writes OpenSSH config.                    |
-| UFW or firewalld path      | Yes      | Host firewall commands are generated for supported families.  |
-| Outbound internet          | Yes      | Packages, Tailscale, and CLI installers need outbound access. |
-| SSH host key confirmation  | Yes      | Paste a provider key, or scan and confirm before pinning.     |
-| Tailscale login approval   | Yes      | Tailnet verification must succeed before hardening.           |
+| Capability         | Requirement                                            |
+| ------------------ | ------------------------------------------------------ |
+| Initial shell      | Log in first as root, or as a user with working sudo.  |
+| Bash               | Required to run the installer and bootstrap.           |
+| curl               | Required by the public one-line installer.             |
+| systemd            | Required for services and timers.                      |
+| OpenSSH server     | Required and must support config includes.             |
+| Outbound internet  | Required for packages, Tailscale, and selected CLIs.   |
+| Tailscale approval | Required before hardening can finish.                  |
+| Public key         | A valid OpenSSH public key must be detected or pasted. |
+| Recovery console   | Strongly advised for smoke tests and recovery.         |
 
-## Local Workstation
+The operator needs a second Tailnet-connected terminal to test the new admin
+login before hardening.
 
-| Dependency         | Required    | Notes                                                           |
-| ------------------ | ----------- | --------------------------------------------------------------- |
-| Bash               | Yes         | Runs the local CLI and tests.                                   |
-| OpenSSH client     | Yes         | Used for initial SSH and Tailnet verification.                  |
-| Local SSH key pair | Yes         | Public key is installed for the admin user.                     |
-| `make`             | Recommended | Runs local checks.                                              |
-| ShellCheck         | Optional    | `make lint` uses it when installed and falls back to `bash -n`. |
-| `nc`               | Recommended | Useful for provider firewall smoke tests.                       |
+## Smoke-Test Order
 
-## Smoke-Test Targets
+1. Ubuntu LTS
+2. Debian stable
+3. Fedora Server
+4. AlmaLinux or Rocky Linux
 
-For `v0.1.0-alpha`, prioritize disposable fresh instances in this order:
+For each image, record the provider, image version, package path, firewall, SSH
+service name, swap result, Tailnet login, and final public port checks.
 
-1. Ubuntu LTS apt path.
-2. Debian stable apt path.
-3. Fedora dnf path.
-4. AlmaLinux or Rocky Linux RHEL-family path.
+## Unsupported Use
 
-For each target, verify the release checklist in
-[release-process.md](release-process.md) and record provider image details in
-the release notes.
-
-## Unsupported Scenarios
-
-- Existing production servers with manual SSH, firewall, or sudo customization.
-- Hosts without systemd.
-- Hosts where SSH is unreachable before bootstrap.
-- Private networks where Tailscale login cannot complete.
-- Environments requiring FIPS, CIS, FedRAMP, PCI, or other formal compliance
-  baselines.
+- hosts without systemd
+- long-lived production servers with custom SSH, firewall, or sudo state
+- hosts that cannot reach Tailscale
+- fleet management
+- compliance hardening

@@ -1,105 +1,77 @@
 # Threat Model
 
-This document describes the public threat model for `vps-bootstrap` as of the
-`v0.1.0-alpha` positioning.
+This model covers the guided script once it starts on a fresh VPS.
 
-## Scope
+## In Scope
 
-In scope:
+- interactive configuration on the VPS
+- admin user and authorized key setup
+- swap setup
+- Tailscale install and join
+- SSH daemon hardening
+- UFW or firewalld rules
+- scoped sudo helpers and audit records
+- optional developer CLIs and update timers
 
-- The local `bin/vps-bootstrap` CLI.
-- Generated remote shell executed on a fresh VPS.
-- SSH host-key pinning for the first connection.
-- Admin user creation and SSH key installation.
-- Tailscale installation and Tailnet verification.
-- SSH daemon hardening.
-- Host firewall configuration.
-- Bounded sudo helper installation.
-- Optional agent CLI and OS update timers.
-- Helper audit logging.
-- Post-setup `vps-agent-auth` guidance when agent CLIs are installed.
+## Out of Scope
 
-Out of scope:
-
-- Applications deployed after bootstrap.
-- Provider console account security.
-- Tailscale account and ACL administration beyond documented assumptions.
-- Vulnerabilities in upstream package managers, OpenSSH, Tailscale, Codex CLI,
-  Grok CLI, GitHub CLI, UFW, or firewalld.
-- General-purpose server compliance hardening.
+- the provider account and console
+- the first SSH connection to the VPS
+- storage of the operator's private key
+- application deployment
+- Tailnet account and ACL administration
+- formal compliance baselines
+- flaws in the base image or upstream packages
 
 ## Assets
 
-- Root access to the fresh VPS during bootstrap.
-- The new admin user's SSH access.
-- Local SSH private keys on the operator workstation.
-- Server SSH host identity.
-- Tailnet access to the host.
-- Final SSH and firewall posture.
-- Sudo helper policy.
-- `/var/log/vps-agent-actions.log` helper audit trail.
-- Developer CLI auth state created after bootstrap.
+- root access during setup
+- the admin user's SSH access
+- the installed public key
+- Tailnet access
+- SSH, sudo, swap, timer, and firewall state
+- developer CLI auth created after setup
+- `/var/log/vps-agent-actions.log`
 
 ## Trust Boundaries
 
-- Operator workstation to public initial SSH as `--login-user`.
-- Operator workstation to Tailnet SSH after Tailscale joins.
-- VPS to OS package repositories.
-- VPS to Tailscale coordination and DERP infrastructure.
-- VPS to official Codex, Grok, and GitHub CLI installer/update endpoints.
-- Host firewall to provider firewall.
-- Root-owned helper commands to user-level agent CLIs.
+- operator terminal input to the root bootstrap process
+- VPS to OS package repositories
+- VPS to Tailscale
+- VPS to official developer CLI install and update endpoints
+- host firewall to provider firewall
+- admin user to root-owned helpers
 
-## Attacker Assumptions
+## Main Threats
 
-The model assumes attackers may:
+| Threat                     | Control                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| Operator lockout           | Keep public SSH open until local sudo and manual Tailnet login checks pass.      |
+| Public SSH remains open    | Remove the public TCP 22 rule in harden after SSH config validation.             |
+| Invalid SSH key            | Validate the selected or pasted public key and show its fingerprint.             |
+| Broad sudo by accident     | Ask for the policy and use scoped root-owned helpers unless full sudo is chosen. |
+| Swap path abuse            | Reject a symlink and do not overwrite an unusable `/swapfile`.                   |
+| Secret collection          | Accept public keys only; defer developer CLI auth until after setup.             |
+| Weak audit trail           | Write helper, user, action, arguments, time, and exit code to JSONL.             |
+| Package drift              | Offer OS and developer CLI update timers as explicit choices.                    |
+| Provider firewall mismatch | Require a separate provider firewall check.                                      |
 
-- Observe or interfere with public-network SSH if host identity is not pinned.
-- Attempt public SSH connections against TCP 22 before hardening.
-- Exploit loose provider firewall rules.
-- Abuse overly broad passwordless sudo if granted.
-- Seek leaked API keys, private keys, or CLI auth material.
-- Compromise mutable upstream installer endpoints or transport paths.
+## Residual Risk
 
-The model does not assume the bootstrap can defend against a compromised VPS
-provider account, a malicious base OS image, a compromised operator workstation,
-or a compromised Tailnet administrator.
+- The operator can approve the wrong public key or Tailnet target.
+- Mutable package and CLI endpoints can be compromised.
+- Provider firewall and Tailnet ACL errors can still block or expose access.
+- A lost root session before Tailnet verification may require provider-console
+  recovery.
+- Supported provider images can differ from their base distribution.
 
-## Primary Threats and Mitigations
+## Review Questions
 
-| Threat                                     | Mitigation                                                                                                                                                                      |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First-connection SSH impersonation         | Pin a provider-supplied host key when available; otherwise scan the live host key, require explicit fingerprint confirmation, and use strict host-key checking afterward.       |
-| Operator lockout during hardening          | Keep the original public SSH path open until Tailnet admin SSH and sudo verification succeed.                                                                                     |
-| Public SSH remains exposed after success   | Harden SSH only after verification and remove public SSH from UFW or firewalld.                                                                                                 |
-| Provider firewall keeps TCP 22 exposed     | Document provider firewall rules and require independent verification from a non-Tailnet network.                                                                               |
-| Admin user receives excessive default sudo | Default to passwordless sudo only for root-owned `vps-agent-*` helpers.                                                                                                         |
-| Agent CLIs obtain direct root primitives   | User-level Codex and Grok binaries are not directly sudo-allowed by the default policy.                                                                                         |
-| Agent/helper misuse is hard to reconstruct | Root-owned helpers write best-effort JSONL audit events with helper, user, action, sanitized args, and exit code.                                                               |
-| Raw secrets are collected during bootstrap | Bootstrap does not accept, upload, or store raw agent CLI tokens, API keys, GitHub private keys, or local SSH private keys.                                                     |
-| Mutable installer supply-chain risk        | Agent CLIs are opt-in; trust boundary is documented; installers run as the admin user where possible; installed CLIs do not receive direct passwordless root access by default. |
-| OS packages fall behind after setup        | A systemd OS update timer runs every two weeks.                                                                                                                                 |
-
-## Residual Risks
-
-- Official mutable installer endpoints for Codex, Grok, Tailscale, and package
-  repositories remain supply-chain dependencies.
-- Provider firewalls vary and must be configured outside the host.
-- Tailscale ACLs are managed outside this repository.
-- A failed or interrupted bootstrap may require provider-console repair.
-- Alpha compatibility is based on documented support paths and smoke tests, not
-  exhaustive provider coverage.
-
-## Security Review Checklist
-
-For behavior changes, reviewers should ask:
-
-- Does this change affect the prepare, verify, or harden phase?
-- Could a failure leave public SSH open longer than documented?
-- Could a failure lock out the operator?
-- Does the default sudo policy become broader?
-- Are secrets accepted, printed, uploaded, or stored?
-- Does dry-run output still make the plan inspectable?
-- Does `doctor` still report the relevant local or post-bootstrap state?
-- Does helper audit logging still preserve the helper's real exit code?
-- Does the provider firewall guidance need updating?
+- Can any failure close public SSH before the Tailnet test?
+- Does SSH config validation still happen before the public firewall rule is
+  removed?
+- Does the change broaden sudo?
+- Does it accept, print, or store a private key or token?
+- Are all new operator choices prompted and shown before mutation?
+- Do reruns preserve valid state without hiding a failed step?
+- Does provider firewall guidance still match the host rules?

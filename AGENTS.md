@@ -1,7 +1,7 @@
 # Agent Notes
 
 This repository contains a Bash CLI for securely bootstrapping fresh VPS hosts.
-The initial SSH login user is distinct from the managed admin user; see `--login-user` vs `--user`.
+Run the guided CLI on the VPS after the operator has logged in.
 
 Keep this file lean. Load the detailed project docs in `documentation/` when changing behavior:
 
