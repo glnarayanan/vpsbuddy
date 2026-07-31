@@ -1727,7 +1727,7 @@ test_login_home_uses_local_passwd_by_uid() {
   expected="$(awk -F: '$3 == 0 { print $6; exit }' /etc/passwd)"
   actual="$(
     unset SUDO_UID SUDO_USER
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2317,SC2329
     getent() { return 97; }
     id() {
       [[ "${1:-}" == "-u" ]] || return 98
