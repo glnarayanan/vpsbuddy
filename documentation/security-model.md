@@ -116,6 +116,10 @@ limited to `preparing`, `prepared`, `hardening`, and `complete`.
 Resume never treats a saved phase as proof that Tailnet login works. Before
 hardening, it checks the admin sudo helper and Tailscale address again, then
 waits for the operator to confirm a real login from another Tailnet device.
+Guided key discovery resolves the invoking account by numeric ID from
+`/etc/passwd` and reads only an `authorized_keys` path that resolves to a
+regular file. Other account or key sources fall back to a pasted public key
+instead of blocking recovery.
 
 ## Tailscale SSH
 
