@@ -28,6 +28,15 @@ curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.s
   bash -s -- --dry-run
 ```
 
+If setup pauses or the session ends, continue the saved plan on the same VPS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh |
+  bash -s -- --resume
+```
+
+`--continue` is an alias for `--resume`.
+
 The installer asks for every operator choice: admin user, SSH public key,
 optional hostname, swap, public web ports, a numbered developer CLI selection
 (Codex, Grok, GitHub CLI, Pi, OpenCode, Amp, Factory Droid, or Claude Code),
@@ -45,8 +54,10 @@ User-scoped upstream CLI installers run as the chosen admin user. GitHub CLI and
 3. Wait while you test `ssh <admin>@<tailscale-ip>` from another terminal.
 4. Harden SSH and remove public TCP 22 only after you type `yes`.
 
-If preparation, the sudo check, or your Tailnet login test fails, public SSH
-stays open.
+If core preparation, the sudo check, or your Tailnet login test fails, public
+SSH stays open. A developer CLI failure is optional: vpsbuddy records it,
+continues to the Tailnet check, hardens SSH after your approval, and prints the
+official retry command at the end.
 
 ## Final State
 
@@ -61,6 +72,8 @@ stays open.
   selected.
 - `vpsbuddy-cli-update.timer` is installed only when a selected CLI has a
   self-update command; it is omitted for `none` and GitHub CLI alone.
+- The chosen plan, current phase, and failed CLI list are kept in root-owned,
+  private files under `/var/lib/vpsbuddy` so setup can resume safely.
 
 Selected CLI links in `/usr/local/bin` are recorded in
 `/var/lib/vpsbuddy/cli-links`. Reruns remove links managed by vpsbuddy. If an old
@@ -76,11 +89,20 @@ vpsbuddy-auth --status
 ```
 
 `vpsbuddy-auth --all` and `--status` cover only the CLIs selected during setup.
-`vpsbuddy` does not ask for or store CLI tokens.
+`vpsbuddy` does not ask for or store CLI tokens. If an installer fails, the
+final summary lists only the failed tools and their official repair steps. You
+do not need to rebuild the VPS.
 
 Mirror the final host firewall policy in the VPS provider firewall: no public
 TCP 22, and public TCP 80/443 only when chosen. See
 [documentation/provider-firewall-checklist.md](documentation/provider-firewall-checklist.md).
+
+## Resume and Recovery
+
+vpsbuddy saves each confirmed plan and safe phase. Use `--resume` after a pause,
+failed core step, or lost terminal. It checks saved state before use and still
+requires explicit Tailnet login approval before hardening. See
+[Reruns and Resume](documentation/README.md#reruns-and-resume).
 
 ## Supported Hosts
 

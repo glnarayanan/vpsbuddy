@@ -309,6 +309,45 @@ test_generated_installer_failure_is_not_masked() {
   rm -rf "$server_fixture" "$home_dir" "$link_dir"
 }
 
+test_generated_cli_installers_have_a_deadline() {
+  local output server_fixture server_script
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-cli-timeout.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  output="$(
+    bash -c '
+      set -Eeuo pipefail
+      phase=prepare
+      admin_user=deploy
+      public_key=ssh-ed25519
+      requested_hostname=
+      enable_tailscale_ssh=0
+      web_enabled=1
+      selected_clis=codex
+      selected_clis_present=1
+      automatic_updates=0
+      full_sudo=0
+      swap_enabled=0
+      swap_size=
+      source "$1"
+      admin_home_dir() { printf "/home/deploy\n"; }
+      run_as_admin() {
+        printf "%s\n" "$2"
+        return 124
+      }
+      if install_codex_cli; then
+        exit 1
+      fi
+    ' bash "$server_fixture" 2>&1
+  )"
+
+  assert_contains "optional CLI installers stop after a fixed deadline" "$output" "--foreground --kill-after=30s 15m"
+  assert_contains "Codex installer bounds its download time" "$server_script" "--connect-timeout 15 --max-time 120"
+  assert_contains "timed-out Codex install is reported as optional failure" "$output" "Codex CLI installer command failed"
+  rm -f "$server_fixture"
+}
+
 test_generated_cli_link_cleanup() {
   local server_script server_fixture link_dir manifest target legacy_sudoers_dir legacy_home legacy_target
   server_script="$(generate_server_script)"
@@ -948,7 +987,13 @@ test_selected_cli_install_dispatch() {
 #!/usr/bin/env bash
 printf 'curl %s\n' "$*" >>"$VPSBUDDY_TEST_RECORD"
 case "$*" in
-  *chatgpt.com/codex/install.sh*) target="$HOME/.codex/bin/codex" ;;
+  *chatgpt.com/codex/install.sh*)
+    target="$HOME/.codex/bin/codex"
+    output_file="${!#}"
+    printf 'mkdir -p "%s"\nprintf "exit 0\\n" >"%s"\nchmod 755 "%s"\n' \
+      "$(dirname "$target")" "$target" "$target" >"$output_file"
+    exit 0
+    ;;
   *x.ai/cli/install.sh*) target="$HOME/.grok/bin/grok" ;;
   *pi.dev/install.sh*) target="$HOME/.local/bin/pi" ;;
   *opencode.ai/install*) target="$HOME/.opencode/bin/opencode" ;;
@@ -1024,16 +1069,16 @@ FAKE_CURL
   ' bash "$server_fixture" "$link_dir" "$home_dir" "$bin_dir"; then
     output="$(cat "$record")"
     for expected in \
-      "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh" \
-      "curl -fsSL https://x.ai/cli/install.sh | bash" \
+      "curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused --connect-timeout 15 --max-time 120 https://chatgpt.com/codex/install.sh" \
+      "https://x.ai/cli/install.sh" \
       "github-package-manager" \
-      "curl -fsSL https://pi.dev/install.sh | sh" \
-      "curl -fsSL https://opencode.ai/install | bash" \
+      "https://pi.dev/install.sh" \
+      "https://opencode.ai/install" \
       "mkdir -p \"\$HOME/.local/bin\"" \
-      "curl -fsSL https://ampcode.com/install.sh | bash" \
+      "https://ampcode.com/install.sh" \
       "xdg-utils" \
-      "curl -fsSL https://app.factory.ai/cli | sh" \
-      "curl -fsSL https://claude.ai/install.sh | bash"; do
+      "https://app.factory.ai/cli" \
+      "https://claude.ai/install.sh"; do
       assert_contains "selected CLI dispatch runs $expected" "$output" "$expected"
     done
 
@@ -1202,7 +1247,7 @@ CURL
   ' bash "$server_fixture" "$link_dir" "$home_dir" "$bin_dir"; then
     output="$(cat "$record")"
     assert_contains "Droid-only selection installs xdg-utils" "$output" "apt-get install -y xdg-utils"
-    assert_contains "Droid-only selection runs the Factory installer" "$output" "curl -fsSL https://app.factory.ai/cli | sh"
+    assert_contains "Droid-only selection runs the Factory installer" "$output" "https://app.factory.ai/cli"
     assert_not_contains "Droid-only selection skips Pi installer" "$output" "pi.dev/install.sh"
     [[ -f "$xdg_state" ]]
     [[ -x "$home_dir/.local/bin/droid" ]]
@@ -1718,24 +1763,30 @@ ${TEST_CONFIRMATION}"
     print_completion_summary() {
       printf "summary:%s\n" "$1"
     }
+    save_resume_plan() { :; }
+    write_bootstrap_status() { :; }
+    read_failed_cli_state() { VPS_FAILED_CLIS=; }
     run_bootstrap
   ' 2>&1
 }
 
-test_prepare_installer_failure_never_starts_hardening() {
-  local server_script server_fixture record public_key output
+test_prepare_installer_failure_still_reaches_hardening() {
+  local server_script server_fixture record public_key output state_dir
   server_script="$(generate_server_script)"
   server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
   record="$(mktemp /tmp/vpsbuddy-prepare-failure-record.XXXXXX)"
+  state_dir="$(mktemp -d /tmp/vpsbuddy-prepare-failure-state.XXXXXX)"
   public_key="$(cat tests/fixtures/id_ed25519.pub)"
   printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
 
   if TEST_PUBLIC_KEY="$public_key" \
     TEST_SERVER_FIXTURE="$server_fixture" \
     TEST_RECORD="$record" \
+    TEST_STATE="$state_dir" \
     bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      VPS_STATE_DIR="$TEST_STATE"
       exec 3<<<"deploy
 yes
 
@@ -1745,14 +1796,19 @@ no
 no
 no
 no
+yes
 yes"
       VPS_INPUT_FD=3
       require_vps_root() {
         :
       }
+      save_resume_plan() { :; }
+      write_bootstrap_status() { :; }
       detect_existing_public_key() {
         printf "%s\n" "$TEST_PUBLIC_KEY"
       }
+      verify_prepared_admin() { :; }
+      tailnet_ipv4() { printf "100.64.0.10\n"; }
       run_server_phase() {
         local phase_name="$1"
         printf "phase:%s\n" "$phase_name" >>"$TEST_RECORD"
@@ -1773,6 +1829,7 @@ yes"
           full_sudo="$VPS_FULL_SUDO"
           swap_enabled="$VPS_SWAP_ENABLED"
           swap_size="$VPS_SWAP_SIZE"
+          bootstrap_state_dir="$TEST_STATE"
           source "$TEST_SERVER_FIXTURE"
           require_root() {
             :
@@ -1850,18 +1907,323 @@ yes"
       }
       run_bootstrap
     '; then
-    fail "forced prepare installer failure stops before hardening"
-  else
     output="$(cat "$record")"
     assert_contains "forced prepare installer failure runs prepare" "$output" "phase:prepare"
     assert_contains "forced prepare installer failure is recorded" "$output" "installer-failure"
-    assert_not_contains "failed rerun keeps the prior CLI timer" "$output" "remove-cli-timer"
-    assert_not_contains "failed rerun keeps the prior auth helper" "$output" "remove-auth-helper"
-    assert_not_contains "forced prepare installer failure never starts hardening" "$output" "phase:harden"
-    assert_not_contains "forced prepare installer failure does not install auth helper" "$output" "auth-helper"
+    assert_contains "forced prepare installer failure still starts hardening" "$output" "phase:harden"
+    assert_eq "forced installer failure is saved for recovery" "grok" "$(cat "$state_dir/failed-clis")"
+  else
+    fail "forced prepare installer failure still reaches hardening"
   fi
 
-  rm -rf "$server_fixture" "$record"
+  rm -rf "$server_fixture" "$record" "$state_dir"
+}
+
+test_server_phase_cleanup_does_not_leak_return_trap() {
+  local output
+
+  if output="$(
+    bash -c '
+      set -Eeuo pipefail
+      source lib/vpsbuddy.sh
+      generate_server_config_prelude() {
+        printf "phase=%q\n" "$1"
+      }
+      generate_server_script() {
+        printf "%s\n" "#!/usr/bin/env bash" "exit 0"
+      }
+      run_server_phase prepare
+      trap -p RETURN
+      printf "after-phase\n"
+    ' 2>&1
+  )"; then
+    assert_eq "server phase cleanup leaves no RETURN trap" "after-phase" "$output"
+  else
+    fail "server phase cleanup leaves no RETURN trap: $output"
+  fi
+}
+
+test_resume_options_are_accepted() {
+  reset_config
+  if parse_args --resume && [[ "$VPS_RESUME" == "1" ]]; then
+    pass "--resume is accepted"
+  else
+    fail "--resume is accepted"
+  fi
+
+  reset_config
+  if parse_args --continue && [[ "$VPS_RESUME" == "1" ]]; then
+    pass "--continue is accepted as a resume alias"
+  else
+    fail "--continue is accepted as a resume alias"
+  fi
+}
+
+test_resume_plan_round_trip() {
+  local server_fixture state_dir public_key
+  state_dir="$(mktemp -d /tmp/vpsbuddy-resume-state.XXXXXX)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-resume-server.XXXXXX)"
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+  chmod 700 "$state_dir"
+
+  VPS_STATE_DIR="$state_dir"
+  VPS_ADMIN_USER="deploy"
+  VPS_PUBLIC_KEY="$public_key"
+  VPS_HOSTNAME="apps-1"
+  VPS_SWAP_ENABLED="1"
+  VPS_SWAP_SIZE="6G"
+  VPS_SWAP_ACTION="create 6G"
+  VPS_WEB="1"
+  VPS_SELECTED_CLIS="codex github"
+  VPS_SELECTED_CLIS_PRESENT="1"
+  VPS_AUTOMATIC_UPDATES="1"
+  VPS_FULL_SUDO="0"
+  VPS_ENABLE_TAILSCALE_SSH="0"
+
+  save_resume_plan
+  write_bootstrap_status prepared
+
+  generate_server_script | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+  bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=0
+    selected_clis=
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    bootstrap_state_dir="$2"
+    source "$1"
+    record_cli_link codex /home/deploy/.codex/bin/codex
+  ' bash "$server_fixture" "$state_dir"
+
+  reset_config
+  VPS_STATE_DIR="$state_dir"
+  if load_resume_plan; then
+    assert_eq "resume restores the admin user" "deploy" "$VPS_ADMIN_USER"
+    assert_eq "resume restores the exact SSH key" "$public_key" "$VPS_PUBLIC_KEY"
+    assert_eq "resume restores the swap choice" "6G" "$VPS_SWAP_SIZE"
+    assert_eq "resume restores the CLI selection" "codex github" "$VPS_SELECTED_CLIS"
+    assert_eq "resume reads the saved phase" "prepared" "$(read_bootstrap_status)"
+  else
+    fail "resume loads a trusted saved plan"
+  fi
+
+  assert_eq "resume plan is private" "600" "$(state_file_mode "$state_dir/bootstrap-plan")"
+  assert_eq "resume state directory is private" "700" "$(state_file_mode "$state_dir")"
+  assert_eq "CLI link manifest is private" "600" "$(state_file_mode "$state_dir/cli-links")"
+  rm -rf "$server_fixture" "$state_dir"
+}
+
+test_resume_rejects_untrusted_state() {
+  local state_dir public_key
+  state_dir="$(mktemp -d /tmp/vpsbuddy-untrusted-state.XXXXXX)"
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+
+  VPS_STATE_DIR="$state_dir"
+  VPS_ADMIN_USER=deploy
+  VPS_PUBLIC_KEY="$public_key"
+  VPS_HOSTNAME=
+  VPS_SWAP_ENABLED=0
+  VPS_SWAP_SIZE=
+  VPS_SWAP_ACTION="leave disabled"
+  VPS_WEB=0
+  VPS_SELECTED_CLIS=
+  VPS_SELECTED_CLIS_PRESENT=1
+  VPS_AUTOMATIC_UPDATES=0
+  VPS_FULL_SUDO=0
+  VPS_ENABLE_TAILSCALE_SSH=0
+  save_resume_plan
+
+  chmod 0666 "$state_dir/bootstrap-plan"
+  reset_config
+  VPS_STATE_DIR="$state_dir"
+  if load_resume_plan; then
+    fail "resume rejects a group-writable saved plan"
+  else
+    pass "resume rejects a group-writable saved plan"
+  fi
+
+  rm -f "$state_dir/bootstrap-plan"
+  ln -s /dev/null "$state_dir/bootstrap-plan"
+  if load_resume_plan; then
+    fail "resume rejects a symlinked saved plan"
+  else
+    pass "resume rejects a symlinked saved plan"
+  fi
+  rm -rf "$state_dir"
+}
+
+test_failed_cli_recovery_commands_are_printed() {
+  local output
+
+  VPS_FAILED_CLIS="codex amp"
+  output="$(print_failed_cli_recovery)"
+  assert_contains "failed Codex install prints the official retry command" "$output" "Codex: curl -fsSL https://chatgpt.com/codex/install.sh | sh"
+  assert_contains "failed Amp install prints the official retry command" "$output" "Amp: curl -fsSL https://ampcode.com/install.sh | bash"
+  assert_contains "failed CLI recovery does not ask for an OS rebuild" "$output" "You do not need to rebuild the VPS."
+}
+
+test_cli_management_failure_does_not_abort_prepare() {
+  local server_script server_fixture state_dir
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  state_dir="$(mktemp -d /tmp/vpsbuddy-cli-optional-state.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=grok
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    bootstrap_state_dir="$2"
+    source "$1"
+    install_grok_cli() { :; }
+    remove_agent_cli_update_timer() { return 1; }
+    remove_agent_auth_helper() { return 1; }
+    remove_deselected_cli_links() { return 1; }
+    install_agent_auth_helper() { return 1; }
+    install_agent_cli_update_timer() { return 1; }
+    print_selected_cli_versions() { return 1; }
+    install_selected_clis
+  ' bash "$server_fixture" "$state_dir"; then
+    pass "developer CLI management failures do not abort prepare"
+  else
+    fail "developer CLI management failures do not abort prepare"
+  fi
+
+  rm -rf "$server_fixture" "$state_dir"
+}
+
+run_saved_resume_phase() {
+  local saved_phase="$1"
+  local output public_key state_dir
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+  state_dir="$(mktemp -d /tmp/vpsbuddy-resume-flow.XXXXXX)"
+
+  output="$(
+    TEST_PUBLIC_KEY="$public_key" VPSBUDDY_STATE_DIR="$state_dir" bash -c '
+      set -Eeuo pipefail
+      source lib/vpsbuddy.sh
+      reset_config
+      VPS_ADMIN_USER=deploy
+      VPS_PUBLIC_KEY="$TEST_PUBLIC_KEY"
+      VPS_HOSTNAME=
+      VPS_SWAP_ENABLED=0
+      VPS_SWAP_SIZE=
+      VPS_SWAP_ACTION="leave disabled"
+      VPS_WEB=0
+      VPS_SELECTED_CLIS=codex
+      VPS_SELECTED_CLIS_PRESENT=1
+      VPS_AUTOMATIC_UPDATES=0
+      VPS_FULL_SUDO=0
+      VPS_ENABLE_TAILSCALE_SSH=0
+      save_resume_plan
+      write_bootstrap_status "$1"
+
+      exec 3<<<"yes
+yes"
+      VPS_INPUT_FD=3
+      require_vps_root() { :; }
+      run_server_phase() { printf "phase:%s\n" "$1"; }
+      tailnet_ipv4() { printf "100.64.0.10\n"; }
+      verify_prepared_admin() { :; }
+      print_completion_summary() { printf "summary:%s\n" "$1"; }
+      main --resume
+      printf "saved-status:%s\n" "$(cat "$VPS_STATE_DIR/bootstrap-status")"
+    ' bash "$saved_phase" 2>&1
+  )"
+
+  rm -rf "$state_dir"
+  printf '%s\n' "$output"
+}
+
+test_prepared_resume_skips_prepare_and_hardens() {
+  local output
+
+  output="$(run_saved_resume_phase prepared)"
+
+  assert_not_contains "prepared resume does not repeat prepare" "$output" "phase:prepare"
+  assert_contains "prepared resume still runs hardening" "$output" "phase:harden"
+  assert_contains "prepared resume completes" "$output" "summary:100.64.0.10"
+  assert_contains "prepared resume records completion" "$output" "saved-status:complete"
+}
+
+test_other_resume_phases_follow_safe_boundaries() {
+  local complete_output hardening_output preparing_output
+
+  preparing_output="$(run_saved_resume_phase preparing)"
+  assert_order "preparing resume repeats prepare before hardening" "$preparing_output" "phase:prepare" "phase:harden"
+  assert_contains "preparing resume records completion" "$preparing_output" "saved-status:complete"
+
+  hardening_output="$(run_saved_resume_phase hardening)"
+  assert_not_contains "hardening resume does not repeat prepare" "$hardening_output" "phase:prepare"
+  assert_contains "hardening resume safely repeats hardening" "$hardening_output" "phase:harden"
+  assert_contains "hardening resume records completion" "$hardening_output" "saved-status:complete"
+
+  complete_output="$(run_saved_resume_phase complete)"
+  assert_not_contains "complete resume does not run prepare" "$complete_output" "phase:prepare"
+  assert_not_contains "complete resume does not run hardening" "$complete_output" "phase:harden"
+  assert_contains "complete resume reports the server" "$complete_output" "summary:100.64.0.10"
+  assert_contains "complete resume leaves the checkpoint complete" "$complete_output" "saved-status:complete"
+}
+
+test_resume_without_saved_plan_starts_guided_recovery() {
+  local output public_key state_dir
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+  state_dir="$(mktemp -d /tmp/vpsbuddy-resume-recovery.XXXXXX)"
+
+  output="$(
+    TEST_PUBLIC_KEY="$public_key" VPSBUDDY_STATE_DIR="$state_dir" bash -c '
+      set -Eeuo pipefail
+      source lib/vpsbuddy.sh
+      collect_configuration() {
+        VPS_ADMIN_USER=deploy
+        VPS_PUBLIC_KEY="$TEST_PUBLIC_KEY"
+        VPS_HOSTNAME=
+        VPS_SWAP_ENABLED=0
+        VPS_SWAP_SIZE=
+        VPS_SWAP_ACTION="leave disabled"
+        VPS_WEB=0
+        VPS_SELECTED_CLIS=
+        VPS_SELECTED_CLIS_PRESENT=1
+        VPS_AUTOMATIC_UPDATES=0
+        VPS_FULL_SUDO=0
+        VPS_ENABLE_TAILSCALE_SSH=0
+      }
+      configuration_summary() { :; }
+      require_vps_root() { :; }
+      run_server_phase() { printf "phase:%s\n" "$1"; }
+      tailnet_ipv4() { printf "100.64.0.10\n"; }
+      verify_prepared_admin() { :; }
+      print_completion_summary() { printf "summary:%s\n" "$1"; }
+      exec 3<<<"yes
+yes"
+      VPS_INPUT_FD=3
+      main --resume
+      printf "saved-status:%s\n" "$(cat "$VPS_STATE_DIR/bootstrap-status")"
+    ' 2>&1
+  )"
+
+  assert_contains "resume without a plan starts guided recovery" "$output" "No trusted saved plan was found"
+  assert_order "guided recovery prepares before hardening" "$output" "phase:prepare" "phase:harden"
+  assert_contains "guided recovery completes" "$output" "saved-status:complete"
+  rm -rf "$state_dir"
 }
 
 test_tailnet_confirmation_controls_hardening() {
@@ -1987,7 +2349,7 @@ test_generated_server_phase_keeps_security_controls() {
   assert_contains "hardening checks effective SSH settings" "$server_script" 'validate_effective_sshd_hardening'
   assert_contains "hardening writes sudo policy" "$server_script" "write_sudoers_policy \"\$full_sudo\""
   assert_contains "developer CLI setup remains" "$server_script" 'install_selected_clis'
-  assert_contains "selected developer CLI failure stops prepare" "$server_script" 'one or more selected developer CLIs failed to install'
+  assert_contains "selected developer CLI failure does not stop hardening" "$server_script" 'continuing to Tailnet verification and SSH hardening'
   assert_contains "admin command pipelines use pipefail" "$server_script" "bash --noprofile --norc -c \"set -o pipefail; \$command\""
   assert_contains "deselected CLI links are cleaned" "$server_script" 'remove_deselected_cli_links'
   assert_contains "CLI links refuse unmanaged replacement" "$server_script" 'refusing to replace unmanaged CLI command'
@@ -1995,12 +2357,8 @@ test_generated_server_phase_keeps_security_controls() {
   assert_contains "Codex updater checks all supported paths" "$server_script" "\$home_dir/.local/bin/codex"
   assert_contains "automatic updates follow operator choice" "$server_script" 'vpsbuddy automatic OS updates disabled'
   assert_contains "automatic update opt-out removes timer" "$server_script" '/etc/systemd/system/vpsbuddy-os-update.timer'
-  assert_contains "CLI update timer installs only after successful installs" "$server_script" 'install_agent_cli_update_timer'
-  assert_order \
-    "CLI auth helper installs after failure check" \
-    "$server_script" \
-    'one or more selected developer CLIs failed to install' \
-    'install_agent_auth_helper'
+  assert_contains "CLI update timer remains managed after optional installer failures" "$server_script" 'install_agent_cli_update_timer'
+  assert_contains "CLI auth helper remains available after optional failures" "$server_script" 'install_agent_auth_helper'
   assert_contains "old OS update timer is retired" "$server_script" 'systemctl disable --now vps-os-update.timer'
   assert_contains "old CLI update timer is retired" "$server_script" 'systemctl disable --now vps-agent-cli-update.timer'
   assert_contains "old apt update config is handled" "$server_script" '/etc/apt/apt.conf.d/20auto-upgrades'
@@ -2011,10 +2369,8 @@ test_generated_server_phase_keeps_security_controls() {
   assert_contains "old SSH drop-in is retired" "$server_script" '/etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf'
   assert_contains "old SSH policy is restored on validation failure" "$server_script" 'restored the prior SSH policy and left public SSH open'
   assert_contains "main SSH config is restored on validation failure" "$server_script" "mv \"\$include_backup\" /etc/ssh/sshd_config"
-  assert_contains \
-    "prepare retires old timers before installing swap" \
-    "$server_script" \
-    $'install_required_packages\n  remove_legacy_vps_bootstrap_timers\n  remove_deselected_cli_links\n  install_swap'
+  assert_contains "prepare keeps CLI cleanup optional" "$server_script" \
+    "could not clean old managed developer CLI links; continuing with VPS setup"
   assert_contains "root admin is rejected on the server" "$server_script" 'root cannot be the managed admin user'
   assert_contains "UID 0 aliases are rejected" "$server_script" 'managed admin user must not have UID 0'
   assert_contains "prepare disables existing Tailscale SSH" "$server_script" 'tailscale set --ssh=false'
@@ -2059,6 +2415,7 @@ test_selected_cli_prompt_accepts_formats
 test_generated_selected_cli_behavior
 test_generated_missing_cli_selection_state
 test_generated_installer_failure_is_not_masked
+test_generated_cli_installers_have_a_deadline
 test_generated_cli_link_cleanup
 test_generated_cli_link_safety
 test_successful_rerun_deselects_managed_cli
@@ -2076,7 +2433,16 @@ test_configuration_has_no_hidden_operator_defaults
 test_guided_dry_run_captures_operator_configuration
 test_fallback_key_and_no_swap_are_captured
 test_root_and_restricted_detected_keys_are_rejected
-test_prepare_installer_failure_never_starts_hardening
+test_prepare_installer_failure_still_reaches_hardening
+test_server_phase_cleanup_does_not_leak_return_trap
+test_resume_options_are_accepted
+test_resume_plan_round_trip
+test_resume_rejects_untrusted_state
+test_failed_cli_recovery_commands_are_printed
+test_cli_management_failure_does_not_abort_prepare
+test_prepared_resume_skips_prepare_and_hardens
+test_other_resume_phases_follow_safe_boundaries
+test_resume_without_saved_plan_starts_guided_recovery
 test_tailnet_confirmation_controls_hardening
 test_legacy_ssh_orchestration_is_removed
 test_checkout_free_installer_downloads_and_runs_bundle

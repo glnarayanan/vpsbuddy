@@ -16,7 +16,11 @@ reset_config() {
   VPS_FULL_SUDO=""
   VPS_ENABLE_TAILSCALE_SSH=""
   VPS_DRY_RUN="0"
+  VPS_RESUME="0"
   VPS_SHOW_HELP="0"
+  VPS_STATE_DIR="${VPSBUDDY_STATE_DIR:-/var/lib/vpsbuddy}"
+  VPS_FAILED_CLIS=""
+  VPS_BOOTSTRAP_STATUS=""
 }
 
 reset_config
@@ -29,6 +33,7 @@ usage() {
   cat << 'USAGE'
 Usage:
   sudo vpsbuddy [--dry-run]
+  sudo vpsbuddy --resume
 
 Run this command after logging into the VPS. The guided setup asks for:
   - the admin user name
@@ -42,8 +47,10 @@ Run this command after logging into the VPS. The guided setup asks for:
   - optional Tailscale SSH
 
 Options:
-  --dry-run   Collect and print the configuration without changing the server.
-  -h, --help  Show this help.
+  --dry-run          Collect and print the configuration without changing the server.
+  --resume           Continue a saved or partial setup on this VPS.
+  --continue         Alias for --resume.
+  -h, --help         Show this help.
 
 The prepare phase keeps public SSH open. After it completes, test the new admin
 login over the Tailnet from another terminal. The script only disables public
@@ -56,6 +63,9 @@ parse_args() {
     case "$1" in
       --dry-run)
         VPS_DRY_RUN="1"
+        ;;
+      --resume | --continue)
+        VPS_RESUME="1"
         ;;
       -h | --help)
         VPS_SHOW_HELP="1"
@@ -480,6 +490,175 @@ require_vps_root() {
   fi
 }
 
+state_file_owner() {
+  stat -c %u "$1" 2> /dev/null || stat -f %u "$1"
+}
+
+state_file_mode() {
+  stat -c %a "$1" 2> /dev/null || stat -f %Lp "$1"
+}
+
+state_path_is_private() {
+  local path="$1"
+  local expected_type="$2"
+  local mode owner
+
+  [[ ! -L "$path" ]] || return 1
+  case "$expected_type" in
+    directory) [[ -d "$path" ]] || return 1 ;;
+    file) [[ -f "$path" ]] || return 1 ;;
+    *) return 1 ;;
+  esac
+
+  owner="$(state_file_owner "$path")" || return 1
+  [[ "$owner" == "$(id -u)" ]] || return 1
+  mode="$(state_file_mode "$path")" || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  (((8#$mode & 077) == 0))
+}
+
+ensure_state_directory() {
+  if [[ -L "$VPS_STATE_DIR" ]]; then
+    error "refusing to use a symlink as the resume state directory: $VPS_STATE_DIR"
+    return 1
+  fi
+
+  install -d -m 0700 "$VPS_STATE_DIR" || return 1
+  chmod 0700 "$VPS_STATE_DIR" || return 1
+  if ! state_path_is_private "$VPS_STATE_DIR" directory; then
+    error "resume state directory is not private or is not owned by root: $VPS_STATE_DIR"
+    return 1
+  fi
+}
+
+write_private_state_file() {
+  local destination="$1"
+  local content="$2"
+  local temporary
+
+  ensure_state_directory || return 1
+  temporary="$(mktemp "$VPS_STATE_DIR/.state.XXXXXX")" || return 1
+  if ! chmod 0600 "$temporary" || ! printf '%s' "$content" > "$temporary"; then
+    rm -f "$temporary"
+    return 1
+  fi
+  if ! mv -f "$temporary" "$destination"; then
+    rm -f "$temporary"
+    return 1
+  fi
+}
+
+save_resume_plan() {
+  local plan
+
+  printf -v plan '%s\n' \
+    'VPSBUDDY_PLAN_VERSION=1' \
+    "$(printf 'saved_admin_user=%q' "$VPS_ADMIN_USER")" \
+    "$(printf 'saved_public_key=%q' "$VPS_PUBLIC_KEY")" \
+    "$(printf 'saved_hostname=%q' "$VPS_HOSTNAME")" \
+    "$(printf 'saved_swap_enabled=%q' "$VPS_SWAP_ENABLED")" \
+    "$(printf 'saved_swap_size=%q' "$VPS_SWAP_SIZE")" \
+    "$(printf 'saved_swap_action=%q' "$VPS_SWAP_ACTION")" \
+    "$(printf 'saved_web=%q' "$VPS_WEB")" \
+    "$(printf 'saved_selected_clis=%q' "$VPS_SELECTED_CLIS")" \
+    "$(printf 'saved_selected_clis_present=%q' "$VPS_SELECTED_CLIS_PRESENT")" \
+    "$(printf 'saved_automatic_updates=%q' "$VPS_AUTOMATIC_UPDATES")" \
+    "$(printf 'saved_full_sudo=%q' "$VPS_FULL_SUDO")" \
+    "$(printf 'saved_enable_tailscale_ssh=%q' "$VPS_ENABLE_TAILSCALE_SSH")"
+  write_private_state_file "$VPS_STATE_DIR/bootstrap-plan" "$plan"
+}
+
+validate_loaded_resume_plan() {
+  validate_admin_user "$VPS_ADMIN_USER" || return 1
+  validate_public_key "$VPS_PUBLIC_KEY" || return 1
+  validate_hostname "$VPS_HOSTNAME" || return 1
+  validate_selected_clis "$VPS_SELECTED_CLIS" || return 1
+  [[ "$VPS_SELECTED_CLIS_PRESENT" == "1" ]] || return 1
+  [[ "$VPS_SWAP_ENABLED" == "0" || "$VPS_SWAP_ENABLED" == "1" ]] || return 1
+  if [[ "$VPS_SWAP_ENABLED" == "1" ]]; then
+    validate_swap_size "$VPS_SWAP_SIZE" || return 1
+  else
+    [[ -z "$VPS_SWAP_SIZE" ]] || return 1
+  fi
+  [[ "$VPS_WEB" == "0" || "$VPS_WEB" == "1" ]] || return 1
+  [[ "$VPS_AUTOMATIC_UPDATES" == "0" || "$VPS_AUTOMATIC_UPDATES" == "1" ]] || return 1
+  [[ "$VPS_FULL_SUDO" == "0" || "$VPS_FULL_SUDO" == "1" ]] || return 1
+  [[ "$VPS_ENABLE_TAILSCALE_SSH" == "0" || "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] || return 1
+}
+
+load_resume_plan() {
+  local plan="$VPS_STATE_DIR/bootstrap-plan"
+  local VPSBUDDY_PLAN_VERSION=""
+  local saved_admin_user="" saved_public_key="" saved_hostname=""
+  local saved_swap_enabled="" saved_swap_size="" saved_swap_action=""
+  local saved_web="" saved_selected_clis="" saved_selected_clis_present=""
+  local saved_automatic_updates="" saved_full_sudo="" saved_enable_tailscale_ssh=""
+
+  if ! state_path_is_private "$VPS_STATE_DIR" directory ||
+    ! state_path_is_private "$plan" file; then
+    return 1
+  fi
+
+  # The file is sourced only after owner, type, and mode checks. Values were
+  # written with shell escaping by save_resume_plan.
+  # shellcheck disable=SC1090
+  source "$plan"
+  [[ "$VPSBUDDY_PLAN_VERSION" == "1" ]] || return 1
+
+  VPS_ADMIN_USER="$saved_admin_user"
+  VPS_PUBLIC_KEY="$saved_public_key"
+  VPS_HOSTNAME="$saved_hostname"
+  VPS_SWAP_ENABLED="$saved_swap_enabled"
+  VPS_SWAP_SIZE="$saved_swap_size"
+  VPS_SWAP_ACTION="$saved_swap_action"
+  VPS_WEB="$saved_web"
+  VPS_SELECTED_CLIS="$saved_selected_clis"
+  VPS_SELECTED_CLIS_PRESENT="$saved_selected_clis_present"
+  VPS_AUTOMATIC_UPDATES="$saved_automatic_updates"
+  VPS_FULL_SUDO="$saved_full_sudo"
+  VPS_ENABLE_TAILSCALE_SSH="$saved_enable_tailscale_ssh"
+  validate_loaded_resume_plan
+}
+
+write_bootstrap_status() {
+  local phase="$1"
+
+  case "$phase" in
+    preparing | prepared | hardening | complete) ;;
+    *)
+      error "invalid bootstrap status: $phase"
+      return 1
+      ;;
+  esac
+  write_private_state_file "$VPS_STATE_DIR/bootstrap-status" "$phase"$'\n'
+  VPS_BOOTSTRAP_STATUS="$phase"
+}
+
+read_bootstrap_status() {
+  local status_file="$VPS_STATE_DIR/bootstrap-status"
+  local saved_status
+
+  state_path_is_private "$status_file" file || return 1
+  IFS= read -r saved_status < "$status_file" || return 1
+  case "$saved_status" in
+    preparing | prepared | hardening | complete)
+      printf '%s\n' "$saved_status"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+read_failed_cli_state() {
+  local failed_file="$VPS_STATE_DIR/failed-clis"
+  local failed_clis
+
+  VPS_FAILED_CLIS=""
+  state_path_is_private "$failed_file" file || return 0
+  IFS= read -r failed_clis < "$failed_file" || return 0
+  validate_selected_clis "$failed_clis" || return 0
+  VPS_FAILED_CLIS="$failed_clis"
+}
+
 generate_server_script() {
   cat << 'SERVER_SCRIPT_HEAD'
 #!/usr/bin/env bash
@@ -501,6 +680,7 @@ selected_clis="${selected_clis-}"
 : "${full_sudo:?sudo policy choice required}"
 : "${swap_enabled:?swap choice required}"
 swap_size="${swap_size:-}"
+bootstrap_state_dir="${bootstrap_state_dir:-/var/lib/vpsbuddy}"
 
 OS_ID=""
 OS_LIKE=""
@@ -512,7 +692,7 @@ SSHD_SERVICE=""
 SUDO_GROUP=""
 TAILSCALE_IP=""
 cli_link_dir="/usr/local/bin"
-cli_link_manifest="/var/lib/vpsbuddy/cli-links"
+cli_link_manifest="$bootstrap_state_dir/cli-links"
 legacy_sudoers_dir="/etc/sudoers.d"
 github_cli_binary="/usr/bin/gh"
 github_cli_apt_keyring="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
@@ -526,6 +706,25 @@ log() {
 
 warn() {
   printf '[vpsbuddy] warning: %s\n' "$*" >&2
+}
+
+write_failed_cli_state() {
+  local failed_clis="$1"
+  local temporary
+
+  if [[ -L "$bootstrap_state_dir" ]]; then
+    warn "refusing to write CLI state through a symlink: $bootstrap_state_dir"
+    return 1
+  fi
+  install -d -m 0700 "$bootstrap_state_dir" || return 1
+  chmod 0700 "$bootstrap_state_dir"
+  temporary="$(mktemp "$bootstrap_state_dir/.failed-clis.XXXXXX")" || return 1
+  chmod 0600 "$temporary"
+  printf '%s\n' "$failed_clis" >"$temporary"
+  if ! mv -f "$temporary" "$bootstrap_state_dir/failed-clis"; then
+    rm -f "$temporary"
+    return 1
+  fi
 }
 
 fail() {
@@ -1226,6 +1425,17 @@ run_as_admin() {
     /bin/bash --noprofile --norc -c "set -o pipefail; $command"
 }
 
+run_as_admin_with_timeout() {
+  local home_dir="$1"
+  local command="$2"
+  local quoted_command quoted_timeout timeout_path
+
+  timeout_path="$(command -v timeout)" || return 1
+  printf -v quoted_command '%q' "$command"
+  printf -v quoted_timeout '%q' "$timeout_path"
+  run_as_admin "$home_dir" "$quoted_timeout --foreground --kill-after=30s 15m /bin/bash --noprofile --norc -c $quoted_command"
+}
+
 admin_command_path() {
   local home_dir="$1"
   local command_name="$2"
@@ -1317,7 +1527,7 @@ record_cli_link() {
     done <"$cli_link_manifest"
   fi
   printf '%s\t%s\n' "$command_name" "$command_path" >>"$tmp"
-  if ! install -d -m 0755 "$(dirname "$cli_link_manifest")"; then
+  if ! install -d -m 0700 "$(dirname "$cli_link_manifest")"; then
     rm -f "$tmp"
     return 1
   fi
@@ -1325,6 +1535,7 @@ record_cli_link() {
     rm -f "$tmp"
     return 1
   fi
+  chmod 0600 "$cli_link_manifest"
   rm -f "$tmp"
 }
 
@@ -1367,8 +1578,9 @@ install_codex_cli() {
   home_dir="$(admin_home_dir)"
   log "installing/updating official Codex CLI for $admin_user"
   warn "executing OpenAI's mutable official Codex installer; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'installer="$(mktemp)"; trap '\''rm -f "$installer"'\'' EXIT; curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused --connect-timeout 15 --max-time 120 https://chatgpt.com/codex/install.sh -o "$installer" && CODEX_NON_INTERACTIVE=1 sh "$installer"'; then
     warn "Codex CLI installer command failed"
+    warn "retry later as $admin_user: curl -fsSL https://chatgpt.com/codex/install.sh | sh"
     return 1
   fi
 
@@ -1399,7 +1611,7 @@ install_grok_cli() {
   else
     log "installing official Grok CLI for $admin_user"
     warn "executing xAI's mutable official Grok installer; this is an accepted supply-chain trust boundary"
-    if ! run_as_admin "$home_dir" 'curl -fsSL https://x.ai/cli/install.sh | bash'; then
+    if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://x.ai/cli/install.sh | bash'; then
       warn "Grok CLI installer command failed"
       return 1
     fi
@@ -1449,7 +1661,7 @@ install_pi_cli() {
   home_dir="$(admin_home_dir)"
   log "installing official Pi CLI for $admin_user"
   warn "executing Pi's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://pi.dev/install.sh | sh'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://pi.dev/install.sh | sh'; then
     warn "Pi CLI installer command failed"
     return 1
   fi
@@ -1469,7 +1681,7 @@ install_opencode_cli() {
   home_dir="$(admin_home_dir)"
   log "installing official OpenCode CLI for $admin_user"
   warn "executing OpenCode's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://opencode.ai/install | bash'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://opencode.ai/install | bash'; then
     warn "OpenCode CLI installer command failed"
     return 1
   fi
@@ -1493,7 +1705,7 @@ install_amp_cli() {
     warn "Amp CLI bin directory setup failed"
     return 1
   fi
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://ampcode.com/install.sh | bash'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://ampcode.com/install.sh | bash'; then
     warn "Amp CLI installer command failed"
     return 1
   fi
@@ -1515,7 +1727,7 @@ install_droid_cli() {
   install_droid_package || return 1
   log "installing official Factory Droid CLI for $admin_user"
   warn "executing Factory's mutable official installer as $admin_user; it stops running droid processes while replacing the binary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://app.factory.ai/cli | sh'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://app.factory.ai/cli | sh'; then
     warn "Factory Droid CLI installer command failed"
     return 1
   fi
@@ -1535,7 +1747,7 @@ install_claude_cli() {
   home_dir="$(admin_home_dir)"
   log "installing official Claude Code CLI for $admin_user"
   warn "executing Claude Code's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://claude.ai/install.sh | bash'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://claude.ai/install.sh | bash'; then
     warn "Claude Code CLI installer command failed"
     return 1
   fi
@@ -1776,12 +1988,21 @@ install_github_cli() {
 }
 
 install_selected_clis() {
-  local failures=0 cli_id
+  local failures=0 cli_id failed_clis=""
 
   if [[ -z "$selected_clis" ]]; then
-    remove_agent_cli_update_timer
-    remove_agent_auth_helper
-    remove_deselected_cli_links
+    if ! write_failed_cli_state ""; then
+      warn "could not clear the developer CLI failure record"
+    fi
+    if ! remove_agent_cli_update_timer; then
+      warn "could not remove the developer CLI update timer"
+    fi
+    if ! remove_agent_auth_helper; then
+      warn "could not remove the developer CLI auth helper"
+    fi
+    if ! remove_deselected_cli_links; then
+      warn "could not remove deselected developer CLI links"
+    fi
     log "developer CLI installation skipped"
     return 0
   fi
@@ -1789,31 +2010,46 @@ install_selected_clis() {
   for cli_id in codex grok github pi opencode amp droid claude; do
     selected_cli "$cli_id" || continue
     case "$cli_id" in
-      codex) install_codex_cli || { warn "Codex CLI installation failed"; failures=$((failures + 1)); } ;;
-      grok) install_grok_cli || { warn "Grok CLI installation failed"; failures=$((failures + 1)); } ;;
-      github) install_github_cli || { warn "GitHub CLI installation failed"; failures=$((failures + 1)); } ;;
-      pi) install_pi_cli || { warn "Pi CLI installation failed"; failures=$((failures + 1)); } ;;
-      opencode) install_opencode_cli || { warn "OpenCode CLI installation failed"; failures=$((failures + 1)); } ;;
-      amp) install_amp_cli || { warn "Amp CLI installation failed"; failures=$((failures + 1)); } ;;
-      droid) install_droid_cli || { warn "Factory Droid CLI installation failed"; failures=$((failures + 1)); } ;;
-      claude) install_claude_cli || { warn "Claude Code CLI installation failed"; failures=$((failures + 1)); } ;;
+      codex) install_codex_cli || { warn "Codex CLI installation failed"; failed_clis="$failed_clis codex"; failures=$((failures + 1)); } ;;
+      grok) install_grok_cli || { warn "Grok CLI installation failed"; failed_clis="$failed_clis grok"; failures=$((failures + 1)); } ;;
+      github) install_github_cli || { warn "GitHub CLI installation failed"; failed_clis="$failed_clis github"; failures=$((failures + 1)); } ;;
+      pi) install_pi_cli || { warn "Pi CLI installation failed"; failed_clis="$failed_clis pi"; failures=$((failures + 1)); } ;;
+      opencode) install_opencode_cli || { warn "OpenCode CLI installation failed"; failed_clis="$failed_clis opencode"; failures=$((failures + 1)); } ;;
+      amp) install_amp_cli || { warn "Amp CLI installation failed"; failed_clis="$failed_clis amp"; failures=$((failures + 1)); } ;;
+      droid) install_droid_cli || { warn "Factory Droid CLI installation failed"; failed_clis="$failed_clis droid"; failures=$((failures + 1)); } ;;
+      claude) install_claude_cli || { warn "Claude Code CLI installation failed"; failed_clis="$failed_clis claude"; failures=$((failures + 1)); } ;;
     esac
   done
+  failed_clis="${failed_clis# }"
+
+  if ! write_failed_cli_state "$failed_clis"; then
+    warn "could not save the developer CLI failure record"
+  fi
+
+  if ! remove_agent_cli_update_timer; then
+    warn "could not replace the developer CLI update timer"
+  fi
+  if ! remove_agent_auth_helper; then
+    warn "could not replace the developer CLI auth helper"
+  fi
+  if ! remove_deselected_cli_links; then
+    warn "could not remove deselected developer CLI links"
+  fi
+  if ! install_agent_auth_helper; then
+    warn "could not install the developer CLI auth helper"
+  fi
+  if has_cli_updates && ! install_agent_cli_update_timer; then
+    warn "could not install the developer CLI update timer"
+  fi
+  if ! print_selected_cli_versions; then
+    warn "could not print all selected developer CLI versions"
+  fi
 
   if [[ "$failures" -gt 0 ]]; then
-    fail "one or more selected developer CLIs failed to install; public SSH remains open"
+    warn "one or more selected developer CLIs failed to install; continuing to Tailnet verification and SSH hardening"
   fi
-
-  remove_agent_cli_update_timer
-  remove_agent_auth_helper
-  remove_deselected_cli_links
-  install_agent_auth_helper
-  if has_cli_updates; then
-    install_agent_cli_update_timer
-  fi
-  print_selected_cli_versions
+  return 0
 }
-
 remove_agent_cli_update_timer() {
   systemctl disable --now vpsbuddy-cli-update.timer >/dev/null 2>&1 || true
   systemctl stop vpsbuddy-cli-update.service >/dev/null 2>&1 || true
@@ -1899,11 +2135,12 @@ remove_deselected_cli_links() {
       fi
     done
     if [[ -s "$tmp" ]]; then
-      install -d -m 0755 "$(dirname "$cli_link_manifest")"
+      install -d -m 0700 "$(dirname "$cli_link_manifest")"
       if ! sort -u "$tmp" -o "$cli_link_manifest"; then
         rm -f "$tmp"
         return 1
       fi
+      chmod 0600 "$cli_link_manifest"
     fi
     rm -f "$tmp"
     return 0
@@ -1927,11 +2164,12 @@ remove_deselected_cli_links() {
   done <"$cli_link_manifest"
 
   if [[ -s "$tmp" ]]; then
-    install -d -m 0755 "$(dirname "$cli_link_manifest")"
+    install -d -m 0700 "$(dirname "$cli_link_manifest")"
     if ! sort -u "$tmp" -o "$cli_link_manifest"; then
       rm -f "$tmp"
       return 1
     fi
+    chmod 0600 "$cli_link_manifest"
   else
     rm -f "$cli_link_manifest"
   fi
@@ -1963,6 +2201,16 @@ run_as_admin() {
     PATH="$home_dir/.local/share/pi-node/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin" \
     SHELL=/bin/bash \
     /bin/bash --noprofile --norc -c "set -o pipefail; $1"
+}
+
+run_as_admin_with_timeout() {
+  local command="$1"
+  local quoted_command quoted_timeout timeout_path
+
+  timeout_path="$(command -v timeout)" || return 1
+  printf -v quoted_command '%q' "$command"
+  printf -v quoted_timeout '%q' "$timeout_path"
+  run_as_admin "$quoted_timeout --foreground --kill-after=30s 15m /bin/bash --noprofile --norc -c $quoted_command"
 }
 
 admin_command_path() {
@@ -2042,7 +2290,7 @@ record_cli_link() {
     done <"$cli_link_manifest"
   fi
   printf '%s\t%s\n' "$command_name" "$command_path" >>"$tmp"
-  if ! install -d -m 0755 "$(dirname "$cli_link_manifest")"; then
+  if ! install -d -m 0700 "$(dirname "$cli_link_manifest")"; then
     rm -f "$tmp"
     return 1
   fi
@@ -2050,6 +2298,7 @@ record_cli_link() {
     rm -f "$tmp"
     return 1
   fi
+  chmod 0600 "$cli_link_manifest"
   rm -f "$tmp"
 }
 
@@ -2102,7 +2351,7 @@ for cli_id in codex grok pi opencode amp droid claude; do
   case "$cli_id" in
     codex)
       printf '[vpsbuddy] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
-      if ! run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'; then
+      if ! run_as_admin_with_timeout 'installer="$(mktemp)"; trap '\''rm -f "$installer"'\'' EXIT; curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused --connect-timeout 15 --max-time 120 https://chatgpt.com/codex/install.sh -o "$installer" && CODEX_NON_INTERACTIVE=1 sh "$installer"'; then
         printf '[vpsbuddy] warning: Codex CLI update failed\n' >&2
         failures=$((failures + 1))
       fi
@@ -2523,7 +2772,9 @@ run_prepare() {
   select_platform
   install_required_packages
   remove_legacy_vps_bootstrap_timers
-  remove_deselected_cli_links
+  if ! remove_deselected_cli_links; then
+    warn "could not clean old managed developer CLI links; continuing with VPS setup"
+  fi
   install_swap
   enable_service "$SSHD_SERVICE"
   configure_automatic_updates
@@ -2590,26 +2841,30 @@ generate_server_config_prelude() {
   printf 'full_sudo=%q\n' "$VPS_FULL_SUDO"
   printf 'swap_enabled=%q\n' "$VPS_SWAP_ENABLED"
   printf 'swap_size=%q\n' "$VPS_SWAP_SIZE"
+  printf 'bootstrap_state_dir=%q\n' "$VPS_STATE_DIR"
 }
 
 run_server_phase() {
   local selected_phase="$1"
-  local phase_script status
+  local phase_script phase_status
 
   phase_script="$(mktemp "${TMPDIR:-/tmp}/vpsbuddy-${selected_phase}.XXXXXX")" || return 1
-  trap 'rm -f "$phase_script"' RETURN
   chmod 700 "$phase_script"
-  {
+  if ! {
     generate_server_config_prelude "$selected_phase"
     generate_server_script
-  } > "$phase_script"
+  } > "$phase_script"; then
+    rm -f "$phase_script"
+    return 1
+  fi
 
   if bash "$phase_script"; then
-    status=0
+    phase_status=0
   else
-    status=$?
+    phase_status=$?
   fi
-  return "$status"
+  rm -f "$phase_script"
+  return "$phase_status"
 }
 
 tailnet_ipv4() {
@@ -2647,6 +2902,34 @@ PAUSED
   esac
 }
 
+print_failed_cli_recovery() {
+  local cli_id
+
+  [[ -n "$VPS_FAILED_CLIS" ]] || return 0
+  cat << 'FAILED_HEAD'
+
+Some optional developer CLIs did not install. SSH hardening still completed.
+Log in as the admin user, then retry the failed installers:
+FAILED_HEAD
+
+  for cli_id in $VPS_FAILED_CLIS; do
+    case "$cli_id" in
+      codex) printf '  Codex: curl -fsSL https://chatgpt.com/codex/install.sh | sh\n' ;;
+      grok) printf '  Grok: curl -fsSL https://x.ai/cli/install.sh | bash\n' ;;
+      github) printf '  GitHub CLI: follow the signed package steps at https://github.com/cli/cli/blob/trunk/docs/install_linux.md\n' ;;
+      pi) printf '  Pi: curl -fsSL https://pi.dev/install.sh | sh\n' ;;
+      opencode) printf '  OpenCode: curl -fsSL https://opencode.ai/install | bash\n' ;;
+      amp) printf '  Amp: curl -fsSL https://ampcode.com/install.sh | bash\n' ;;
+      droid) printf '  Factory Droid: curl -fsSL https://app.factory.ai/cli | sh\n' ;;
+      claude) printf '  Claude Code: curl -fsSL https://claude.ai/install.sh | bash\n' ;;
+    esac
+  done
+  cat << 'FAILED_FOOT'
+
+After retrying, run vpsbuddy-auth --status. You do not need to rebuild the VPS.
+FAILED_FOOT
+}
+
 print_completion_summary() {
   local tailnet_ip="$1"
 
@@ -2673,31 +2956,79 @@ Authenticate the developer CLIs while logged in as the admin user:
   vpsbuddy-auth --status
 AUTH
   fi
+
+  print_failed_cli_recovery
 }
 
 run_bootstrap() {
-  local confirmed tailnet_ip
+  local confirmed tailnet_ip prepare_needed=1
+
+  if [[ "$VPS_DRY_RUN" == "1" && "$VPS_RESUME" == "1" ]]; then
+    error "--dry-run and --resume cannot be used together"
+    return 1
+  fi
 
   if [[ "$VPS_DRY_RUN" != "1" ]]; then
     require_vps_root || return 1
   fi
 
-  collect_configuration || return 1
-  configuration_summary
+  if [[ "$VPS_RESUME" == "1" ]] && load_resume_plan; then
+    VPS_BOOTSTRAP_STATUS="$(read_bootstrap_status || printf 'preparing')"
+    printf '[vpsbuddy] Loaded the saved setup plan. Last safe phase: %s.\n' "$VPS_BOOTSTRAP_STATUS"
+    configuration_summary
 
-  if [[ "$VPS_DRY_RUN" == "1" ]]; then
-    printf '\nDry run complete; no server changes were made.\n'
-    return 0
+    if [[ "$VPS_BOOTSTRAP_STATUS" == "complete" ]]; then
+      tailnet_ip="$(tailnet_ipv4)"
+      if [[ -z "$tailnet_ip" ]]; then
+        error "saved setup is complete, but Tailscale did not return an IPv4 address"
+        return 1
+      fi
+      read_failed_cli_state
+      print_completion_summary "$tailnet_ip"
+      return 0
+    fi
+
+    confirmed="$(prompt_yes_no "Continue this saved setup plan")" || return 1
+    if [[ "$confirmed" != "1" ]]; then
+      printf '[vpsbuddy] Resume cancelled. No server changes were made.\n'
+      return 0
+    fi
+
+    case "$VPS_BOOTSTRAP_STATUS" in
+      prepared | hardening) prepare_needed=0 ;;
+    esac
+  else
+    if [[ "$VPS_RESUME" == "1" ]]; then
+      printf '[vpsbuddy] No trusted saved plan was found. Starting guided recovery for this VPS.\n' >&2
+    fi
+    collect_configuration || return 1
+    configuration_summary
+
+    if [[ "$VPS_DRY_RUN" == "1" ]]; then
+      printf '\nDry run complete; no server changes were made.\n'
+      return 0
+    fi
+
+    confirmed="$(prompt_yes_no "Apply this configuration to the VPS")" || return 1
+    if [[ "$confirmed" != "1" ]]; then
+      printf '[vpsbuddy] No server changes were made.\n'
+      return 0
+    fi
+    save_resume_plan || {
+      error "could not save the resume plan; no server changes were made"
+      return 1
+    }
   fi
 
-  confirmed="$(prompt_yes_no "Apply this configuration to the VPS")" || return 1
-  if [[ "$confirmed" != "1" ]]; then
-    printf '[vpsbuddy] No server changes were made.\n'
-    return 0
+  if [[ "$prepare_needed" == "1" ]]; then
+    write_bootstrap_status preparing || return 1
+    printf '[vpsbuddy] Phase 1: prepare the VPS while public SSH remains open.\n'
+    run_server_phase prepare || return 1
+    write_bootstrap_status prepared || return 1
+  else
+    printf '[vpsbuddy] Prepare was already complete; checking the saved admin and Tailnet state.\n'
   fi
-
-  printf '[vpsbuddy] Phase 1: prepare the VPS while public SSH remains open.\n'
-  run_server_phase prepare || return 1
+  read_failed_cli_state
 
   tailnet_ip="$(tailnet_ipv4)"
   if [[ -z "$tailnet_ip" ]]; then
@@ -2714,11 +3045,12 @@ run_bootstrap() {
     return 0
   fi
 
+  write_bootstrap_status hardening || return 1
   printf '[vpsbuddy] Phase 2: apply SSH and firewall hardening.\n'
   run_server_phase harden || return 1
+  write_bootstrap_status complete || return 1
   print_completion_summary "$tailnet_ip"
 }
-
 main() {
   reset_config
   parse_args "$@" || return 1

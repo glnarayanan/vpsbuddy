@@ -44,8 +44,9 @@ Harden then writes and validates OpenSSH hardening, writes the chosen sudo
 policy, limits SSH to `tailscale0`, applies public web rules, and optionally
 enables Tailscale SSH.
 
-If you do not confirm, setup pauses with public SSH open. Rerun later; prompts
-appear again so the next run uses an explicit configuration.
+If you do not confirm, setup pauses with public SSH open. Rerun with
+`--resume`; vpsbuddy loads the saved choices, checks the admin and Tailnet
+state again, and waits for a new explicit confirmation before hardening.
 
 ## Developer CLIs
 
@@ -59,11 +60,14 @@ required OS packages are installed as root through the supported apt, dnf, or yu
 package manager. Bootstrap accepts GitHub CLI only when its signed official
 repository is configured.
 
-If a selected installer fails, prepare stops while public SSH stays open. Each
-rerun clears the managed CLI update timer and auth helper, then adds them again
-for the new selection only. Deselecting a CLI stops vpsbuddy management but does
-not uninstall a third-party tool. The CLI update timer is omitted for `none` and
-GitHub CLI alone.
+A selected CLI installer or CLI helper failure does not stop VPS setup. vpsbuddy
+records failed installers, continues to Tailnet login verification, and hardens
+SSH only after the operator confirms that login. The final summary prints an
+official repair command for each failed tool. User-scoped installers have a
+15-minute deadline, so a stalled optional installer cannot block the Tailnet
+gate forever. Deselecting a CLI stops vpsbuddy management but does not uninstall
+a third-party tool. The CLI update timer is omitted for `none` and GitHub CLI
+alone.
 
 After setup, log in as the admin user and run:
 
@@ -85,11 +89,27 @@ update operations. Full sudo writes `NOPASSWD:ALL`.
 Helper calls write best-effort JSONL audit events to
 `/var/log/vpsbuddy-actions.log`.
 
-## Reruns
+## Reruns and Resume
 
 Reruns are meant to be idempotent. Existing users, keys, active swap, Tailscale
 state, helper files, timers, firewall rules, and SSH config are checked or set
 to the chosen state.
+
+vpsbuddy saves the confirmed plan before the first change. It writes the plan,
+phase, and failed CLI list to private root-owned files under
+`/var/lib/vpsbuddy`. Use this checkout-free command after a pause, failed core
+step, or lost terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh |
+  bash -s -- --resume
+```
+
+`--continue` is an alias. A saved `prepared` or `hardening` phase skips
+prepare, rechecks the admin sudo helper and Tailscale, and waits for Tailnet
+login approval before hardening. A saved `complete` phase reports the final
+state without changing the server. If a partial install predates saved plans,
+resume starts the guided setup and saves the choices before changing the VPS.
 
 The first rerun after the rename retires files owned by `vps-bootstrap`: helper
 commands, sudoers policy, timers, update files, and SSH drop-ins. SSH changes
