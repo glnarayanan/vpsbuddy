@@ -19,9 +19,9 @@ curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.s
 ```
 
 During the run: confirm the key fingerprint or paste a test key, choose an
-explicit swap size, complete Tailscale login, keep the first public SSH session
-open, test the printed admin Tailnet login from another terminal, and type
-`yes` only after that login works.
+explicit swap size, choose a CLI list or `none`, complete Tailscale login, keep
+the first public SSH session open, test the printed admin Tailnet login from
+another terminal, and type `yes` only after that login works.
 
 After hardening, as the admin user:
 
@@ -42,8 +42,9 @@ nc -vz <public-ip> 443
 ```
 
 Expect: public TCP 22 closed; Tailnet SSH works; password and root SSH disabled;
-TCP 80/443 match the setup choice; swap and selected timers/CLIs match; helper
-use appends to `/var/log/vpsbuddy-actions.log`.
+TCP 80/443 match the setup choice; swap, selected CLIs, and selected timers
+match; no CLI update timer exists for `none` or GitHub CLI alone; helper use
+appends to `/var/log/vpsbuddy-actions.log`.
 
 Test at least Ubuntu before an alpha tag. Record the provider image in the
 release notes.

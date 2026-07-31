@@ -10,7 +10,7 @@ reset_config() {
   VPS_SWAP_SIZE=""
   VPS_SWAP_ACTION=""
   VPS_WEB=""
-  VPS_INSTALL_AGENT_CLIS=""
+  VPS_SELECTED_CLIS=""
   VPS_AUTOMATIC_UPDATES=""
   VPS_FULL_SUDO=""
   VPS_ENABLE_TAILSCALE_SSH=""
@@ -35,7 +35,7 @@ Run this command after logging into the VPS. The guided setup asks for:
   - an optional hostname
   - swap setup
   - public web ports
-  - Codex, Grok, and GitHub CLI installation
+  - selected developer CLI installation
   - automatic OS updates
   - scoped or full passwordless sudo
   - optional Tailscale SSH
@@ -130,6 +130,139 @@ prompt_yes_no() {
         error "answer yes or no"
         ;;
     esac
+  done
+}
+
+cli_name() {
+  case "$1" in
+    codex) printf 'Codex' ;;
+    grok) printf 'Grok' ;;
+    github) printf 'GitHub CLI' ;;
+    pi) printf 'Pi' ;;
+    opencode) printf 'OpenCode' ;;
+    amp) printf 'Amp' ;;
+    droid) printf 'Factory Droid' ;;
+    claude) printf 'Claude Code' ;;
+    *) return 1 ;;
+  esac
+}
+
+selected_cli() {
+  local selected="$1"
+  local cli_id="$2"
+  local selected_id
+
+  for selected_id in $selected; do
+    [[ "$selected_id" == "$cli_id" ]] && return 0
+  done
+  return 1
+}
+
+validate_selected_clis() {
+  local selected="$1"
+  local cli_id previous="" previous_id
+
+  for cli_id in $selected; do
+    case "$cli_id" in
+      codex | grok | github | pi | opencode | amp | droid | claude)
+        for previous_id in $previous; do
+          [[ "$previous_id" == "$cli_id" ]] && return 1
+        done
+        previous="$previous $cli_id"
+        ;;
+      *) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+selected_cli_names() {
+  local selected="$1"
+  local cli_id
+
+  for cli_id in codex grok github pi opencode amp droid claude; do
+    if selected_cli "$selected" "$cli_id"; then
+      cli_name "$cli_id"
+      printf ' '
+    fi
+  done | sed 's/ $//'
+}
+
+prompt_selected_clis() {
+  local answer normalized answer_lower token selected="" chosen cli_id
+  local -a choices
+
+  while true; do
+    cat >&2 << 'CLI_PROMPT'
+[vpsbuddy] Select developer CLIs to install:
+  1) Codex
+  2) Grok
+  3) GitHub CLI
+  4) Pi
+  5) OpenCode
+  6) Amp
+  7) Factory Droid
+  8) Claude Code
+CLI_PROMPT
+    printf '[vpsbuddy] Enter numbers separated by spaces or commas, all, or none: ' >&2
+    answer="$(read_interactive_answer)" || return 1
+
+    if [[ -z "$answer" ]]; then
+      error "choose at least one CLI, or enter none"
+      continue
+    fi
+
+    answer_lower="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
+    case "$answer_lower" in
+      all)
+        printf '%s\n' 'codex grok github pi opencode amp droid claude'
+        return 0
+        ;;
+      none)
+        printf '\n'
+        return 0
+        ;;
+    esac
+
+    if [[ ! "$answer" =~ ^[[:space:]]*[0-9]+([[:space:]]*[,[:space:]][[:space:]]*[0-9]+)*[[:space:]]*$ ]]; then
+      error "enter valid CLI numbers separated by spaces or commas, all, or none"
+      continue
+    fi
+
+    normalized="${answer//,/ }"
+    read -r -a choices <<< "$normalized"
+    selected=""
+    for token in "${choices[@]}"; do
+      case "$token" in
+        1) cli_id=codex ;;
+        2) cli_id=grok ;;
+        3) cli_id=github ;;
+        4) cli_id=pi ;;
+        5) cli_id=opencode ;;
+        6) cli_id=amp ;;
+        7) cli_id=droid ;;
+        8) cli_id=claude ;;
+        *)
+          error "CLI choice must be a number from 1 to 8"
+          selected="invalid"
+          break
+          ;;
+      esac
+      if ! selected_cli "$selected" "$cli_id"; then
+        selected="${selected:+$selected }$cli_id"
+      fi
+    done
+    [[ "$selected" != "invalid" ]] || continue
+
+    chosen="$selected"
+    selected=""
+    for cli_id in codex grok github pi opencode amp droid claude; do
+      if selected_cli "$chosen" "$cli_id"; then
+        selected="$selected $cli_id"
+      fi
+    done
+    printf '%s\n' "${selected# }"
+    return 0
   done
 }
 
@@ -309,7 +442,7 @@ collect_configuration() {
 
   collect_swap_configuration || return 1
   VPS_WEB="$(prompt_yes_no "Open public web ports 80 and 443")" || return 1
-  VPS_INSTALL_AGENT_CLIS="$(prompt_yes_no "Install Codex, Grok, and GitHub CLIs")" || return 1
+  VPS_SELECTED_CLIS="$(prompt_selected_clis)" || return 1
   VPS_AUTOMATIC_UPDATES="$(prompt_yes_no "Manage automatic OS updates with vpsbuddy")" || return 1
   VPS_FULL_SUDO="$(prompt_yes_no "Grant the admin user full passwordless sudo")" || return 1
   VPS_ENABLE_TAILSCALE_SSH="$(
@@ -326,7 +459,7 @@ Configuration:
   Hostname: $([[ -n "$VPS_HOSTNAME" ]] && printf '%s' "$VPS_HOSTNAME" || printf 'keep current')
   Swap: $VPS_SWAP_ACTION
   Public web ports: $([[ "$VPS_WEB" == "1" ]] && printf 'open 80/443' || printf 'closed')
-  Developer CLIs: $([[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]] && printf 'install' || printf 'skip')
+  Developer CLIs: $([[ -n "$VPS_SELECTED_CLIS" ]] && selected_cli_names "$VPS_SELECTED_CLIS" || printf 'none')
   Automatic OS updates: $([[ "$VPS_AUTOMATIC_UPDATES" == "1" ]] && printf 'enable' || printf 'disable bootstrap timer')
   Sudo policy: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless sudo' || printf 'scoped helpers')
   Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'enabled' || printf 'disabled')
@@ -356,7 +489,7 @@ set -Eeuo pipefail
 requested_hostname="${requested_hostname:-}"
 : "${enable_tailscale_ssh:?Tailscale SSH choice required}"
 : "${web_enabled:?web port choice required}"
-: "${install_agent_clis:?developer CLI choice required}"
+selected_clis="${selected_clis-}"
 : "${automatic_updates:?automatic update choice required}"
 : "${full_sudo:?sudo policy choice required}"
 : "${swap_enabled:?swap choice required}"
@@ -371,6 +504,9 @@ FIREWALL_BACKEND=""
 SSHD_SERVICE=""
 SUDO_GROUP=""
 TAILSCALE_IP=""
+cli_link_dir="/usr/local/bin"
+cli_link_manifest="/var/lib/vpsbuddy/cli-links"
+legacy_sudoers_dir="/etc/sudoers.d"
 
 log() {
   printf '[vpsbuddy] %s\n' "$*"
@@ -383,6 +519,32 @@ warn() {
 fail() {
   printf '[vpsbuddy] error: %s\n' "$*" >&2
   exit 1
+}
+
+selected_cli() {
+  local cli_id="$1"
+  local selected_id
+
+  for selected_id in $selected_clis; do
+    [[ "$selected_id" == "$cli_id" ]] && return 0
+  done
+  return 1
+}
+
+validate_selected_clis_server() {
+  local cli_id previous="" previous_id
+
+  for cli_id in $selected_clis; do
+    case "$cli_id" in
+      codex | grok | github | pi | opencode | amp | droid | claude)
+        for previous_id in $previous; do
+          [[ "$previous_id" == "$cli_id" ]] && fail "duplicate developer CLI selection: $cli_id"
+        done
+        previous="$previous $cli_id"
+        ;;
+      *) fail "unknown developer CLI selection: $cli_id" ;;
+    esac
+  done
 }
 
 command_exists() {
@@ -1038,13 +1200,17 @@ run_as_admin() {
   local home_dir="$1"
   local command="$2"
 
-  sudo -H -u "$admin_user" env HOME="$home_dir" SHELL=/bin/bash bash -lc "$command"
+  sudo -H -u "$admin_user" env -i \
+    HOME="$home_dir" \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.local/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/share/pi-node/current/bin:$home_dir/bin" \
+    SHELL=/bin/bash \
+    bash --noprofile --norc -c "set -o pipefail; $command"
 }
 
 admin_command_path() {
   local home_dir="$1"
   local command_name="$2"
-  local candidate
+  local candidate discovered_path
 
   case "$command_name" in
     codex)
@@ -1055,30 +1221,113 @@ admin_command_path() {
         fi
       done
       ;;
-    grok | agent)
-      candidate="$home_dir/.grok/bin/$command_name"
-      if [[ -x "$candidate" ]]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
+    grok)
+      candidate="$home_dir/.grok/bin/grok"
+      ;;
+    pi)
+      candidate="$home_dir/.local/bin/pi"
+      ;;
+    opencode)
+      candidate="$home_dir/.opencode/bin/opencode"
+      ;;
+    amp)
+      for candidate in "$home_dir/.local/bin/amp" "$home_dir/.amp/bin/amp"; do
+        [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+      done
+      candidate=""
+      ;;
+    droid | claude)
+      candidate="$home_dir/.local/bin/$command_name"
+      ;;
+    github)
+      candidate="/usr/bin/gh"
       ;;
   esac
 
-  run_as_admin "$home_dir" "command -v $(printf '%q' "$command_name")" 2>/dev/null || true
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  if [[ "$command_name" == "github" ]]; then
+    discovered_path="$(run_as_admin "$home_dir" 'command -v gh' 2>/dev/null || true)"
+  else
+    discovered_path="$(run_as_admin "$home_dir" "command -v $(printf '%q' "$command_name")" 2>/dev/null || true)"
+  fi
+  [[ "$discovered_path" == "$cli_link_dir/$command_name" ]] && return 1
+  printf '%s\n' "$discovered_path"
+}
+
+cli_link_manifest_contains() {
+  local wanted_name="$1"
+  local wanted_target="$2"
+  local existing_name existing_target
+
+  [[ -f "$cli_link_manifest" ]] || return 1
+  while IFS=$'\t' read -r existing_name existing_target; do
+    if [[ "$existing_name" == "$wanted_name" && "$existing_target" == "$wanted_target" ]]; then
+      return 0
+    fi
+  done <"$cli_link_manifest"
+  return 1
+}
+
+record_cli_link() {
+  local command_name="$1"
+  local command_path="$2"
+  local existing_name existing_target tmp
+
+  tmp="$(mktemp)"
+  if [[ -f "$cli_link_manifest" ]]; then
+    while IFS=$'\t' read -r existing_name existing_target; do
+      [[ "$existing_name" == "$command_name" ]] && continue
+      printf '%s\t%s\n' "$existing_name" "$existing_target" >>"$tmp"
+    done <"$cli_link_manifest"
+  fi
+  printf '%s\t%s\n' "$command_name" "$command_path" >>"$tmp"
+  if ! install -d -m 0755 "$(dirname "$cli_link_manifest")"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! sort -u "$tmp" -o "$cli_link_manifest"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
 }
 
 link_admin_command() {
   local home_dir="$1"
   local command_name="$2"
-  local command_path
+  local command_path link_path existing_target
 
   command_path="$(admin_command_path "$home_dir" "$command_name")"
   if [[ -z "$command_path" || ! -x "$command_path" ]]; then
     return 1
   fi
 
-  install -d -m 0755 /usr/local/bin
-  ln -sf "$command_path" "/usr/local/bin/$command_name"
+  install -d -m 0755 "$cli_link_dir"
+  link_path="$cli_link_dir/$command_name"
+  if [[ -e "$link_path" || -L "$link_path" ]]; then
+    if [[ ! -L "$link_path" ]]; then
+      warn "refusing to replace unmanaged CLI command: $link_path"
+      return 1
+    fi
+    existing_target="$(readlink "$link_path")"
+    if [[ "$existing_target" != "$command_path" ]] &&
+      ! cli_link_manifest_contains "$command_name" "$existing_target"; then
+      warn "refusing to replace unmanaged CLI link: $link_path"
+      return 1
+    fi
+  fi
+  if ! ln -sf "$command_path" "$link_path"; then
+    warn "could not link $command_name to $command_path"
+    return 1
+  fi
+  if ! record_cli_link "$command_name" "$command_path"; then
+    warn "could not record CLI link: $link_path"
+    return 1
+  fi
 }
 
 install_codex_cli() {
@@ -1087,14 +1336,20 @@ install_codex_cli() {
   home_dir="$(admin_home_dir)"
   log "installing/updating official Codex CLI for $admin_user"
   warn "executing OpenAI's mutable official Codex installer; this is an accepted supply-chain trust boundary"
-  run_as_admin "$home_dir" 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
+  if ! run_as_admin "$home_dir" 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'; then
+    warn "Codex CLI installer command failed"
+    return 1
+  fi
 
   if ! link_admin_command "$home_dir" codex; then
     warn "Codex CLI installer did not put codex on $admin_user PATH"
     return 1
   fi
 
-  run_as_admin "$home_dir" 'codex --version' >/dev/null
+  if ! run_as_admin "$home_dir" 'codex --version' >/dev/null; then
+    warn "Codex CLI version check failed"
+    return 1
+  fi
 }
 
 install_grok_cli() {
@@ -1104,11 +1359,19 @@ install_grok_cli() {
   grok_bin="$home_dir/.grok/bin/grok"
 
   if [[ -x "$grok_bin" ]]; then
-    log "Grok CLI is already installed for $admin_user"
+    log "updating official Grok CLI for $admin_user"
+    warn "running Grok's mutable official updater; this is an accepted supply-chain trust boundary"
+    if ! run_as_admin "$home_dir" 'grok update'; then
+      warn "Grok CLI updater command failed"
+      return 1
+    fi
   else
     log "installing official Grok CLI for $admin_user"
     warn "executing xAI's mutable official Grok installer; this is an accepted supply-chain trust boundary"
-    sudo -H -u "$admin_user" env SHELL=/bin/bash bash -c 'curl -fsSL https://x.ai/cli/install.sh | bash'
+    if ! run_as_admin "$home_dir" 'curl -fsSL https://x.ai/cli/install.sh | bash'; then
+      warn "Grok CLI installer command failed"
+      return 1
+    fi
   fi
 
   if [[ ! -x "$grok_bin" ]]; then
@@ -1116,10 +1379,143 @@ install_grok_cli() {
     return 1
   fi
 
-  install -d -m 0755 /usr/local/bin
-  ln -sf "$grok_bin" /usr/local/bin/grok
+  if ! link_admin_command "$home_dir" grok; then
+    warn "Grok CLI installer did not put grok on $admin_user PATH"
+    return 1
+  fi
+  if ! run_as_admin "$home_dir" 'grok --version' >/dev/null; then
+    warn "Grok CLI version check failed"
+    return 1
+  fi
+}
 
-  sudo -H -u "$admin_user" "$grok_bin" --version >/dev/null
+install_droid_package() {
+  log "installing xdg-utils for Factory Droid"
+
+  case "$PKG_BACKEND" in
+    apt)
+      export DEBIAN_FRONTEND=noninteractive
+      if ! apt-get install -y xdg-utils; then
+        warn "could not install xdg-utils for Factory Droid"
+        return 1
+      fi
+      ;;
+    dnf | yum)
+      if ! "$PKG_BIN" install -y xdg-utils; then
+        warn "could not install xdg-utils for Factory Droid"
+        return 1
+      fi
+      ;;
+    *)
+      fail "cannot install xdg-utils on unsupported package backend: $PKG_BACKEND"
+      ;;
+  esac
+}
+
+install_pi_cli() {
+  local home_dir
+
+  home_dir="$(admin_home_dir)"
+  log "installing official Pi CLI for $admin_user"
+  warn "executing Pi's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
+  if ! run_as_admin "$home_dir" 'curl -fsSL https://pi.dev/install.sh | sh'; then
+    warn "Pi CLI installer command failed"
+    return 1
+  fi
+  link_admin_command "$home_dir" pi || {
+    warn "Pi installer did not create $home_dir/.local/bin/pi"
+    return 1
+  }
+  if ! run_as_admin "$home_dir" 'pi --version' >/dev/null; then
+    warn "Pi CLI version check failed"
+    return 1
+  fi
+}
+
+install_opencode_cli() {
+  local home_dir
+
+  home_dir="$(admin_home_dir)"
+  log "installing official OpenCode CLI for $admin_user"
+  warn "executing OpenCode's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
+  if ! run_as_admin "$home_dir" 'curl -fsSL https://opencode.ai/install | bash'; then
+    warn "OpenCode CLI installer command failed"
+    return 1
+  fi
+  link_admin_command "$home_dir" opencode || {
+    warn "OpenCode installer did not create $home_dir/.opencode/bin/opencode"
+    return 1
+  }
+  if ! run_as_admin "$home_dir" 'opencode --version' >/dev/null; then
+    warn "OpenCode CLI version check failed"
+    return 1
+  fi
+}
+
+install_amp_cli() {
+  local home_dir
+
+  home_dir="$(admin_home_dir)"
+  log "installing official Amp CLI for $admin_user"
+  warn "executing Amp's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
+  if ! run_as_admin "$home_dir" 'mkdir -p "$HOME/.local/bin"'; then
+    warn "Amp CLI bin directory setup failed"
+    return 1
+  fi
+  if ! run_as_admin "$home_dir" 'curl -fsSL https://ampcode.com/install.sh | bash'; then
+    warn "Amp CLI installer command failed"
+    return 1
+  fi
+  # The installer keeps the binary in ~/.amp/bin; the resolver and PATH include it.
+  link_admin_command "$home_dir" amp || {
+    warn "Amp installer did not create a usable amp command"
+    return 1
+  }
+  if ! run_as_admin "$home_dir" 'amp --version' >/dev/null; then
+    warn "Amp CLI version check failed"
+    return 1
+  fi
+}
+
+install_droid_cli() {
+  local home_dir
+
+  home_dir="$(admin_home_dir)"
+  install_droid_package || return 1
+  log "installing official Factory Droid CLI for $admin_user"
+  warn "executing Factory's mutable official installer as $admin_user; it stops running droid processes while replacing the binary"
+  if ! run_as_admin "$home_dir" 'curl -fsSL https://app.factory.ai/cli | sh'; then
+    warn "Factory Droid CLI installer command failed"
+    return 1
+  fi
+  link_admin_command "$home_dir" droid || {
+    warn "Factory installer did not create $home_dir/.local/bin/droid"
+    return 1
+  }
+  if ! run_as_admin "$home_dir" 'droid --version' >/dev/null; then
+    warn "Factory Droid CLI version check failed"
+    return 1
+  fi
+}
+
+install_claude_cli() {
+  local home_dir
+
+  home_dir="$(admin_home_dir)"
+  log "installing official Claude Code CLI for $admin_user"
+  warn "executing Claude Code's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
+  if ! run_as_admin "$home_dir" 'curl -fsSL https://claude.ai/install.sh | bash'; then
+    warn "Claude Code CLI installer command failed"
+    return 1
+  fi
+  link_admin_command "$home_dir" claude || {
+    warn "Claude Code installer did not create $home_dir/.local/bin/claude"
+    return 1
+  }
+  if ! run_as_admin "$home_dir" 'claude --version' >/dev/null; then
+    warn "Claude Code CLI version check failed"
+    return 1
+  fi
 }
 
 install_github_cli() {
@@ -1132,54 +1528,80 @@ install_github_cli() {
 
   if [[ "$PKG_BACKEND" == "apt" ]]; then
     install -d -m 0755 /etc/apt/keyrings
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    if ! curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; then
+      warn "GitHub CLI repository key download failed"
+      return 1
+    fi
     chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
     install -d -m 0755 /etc/apt/sources.list.d
     printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
       "$(dpkg --print-architecture)" \
       >/etc/apt/sources.list.d/github-cli.list
-    apt-get update
-    apt-get install -y gh
-    gh --version >/dev/null
+    if ! apt-get update; then
+      warn "GitHub CLI package index update failed"
+      return 1
+    fi
+    if ! apt-get install -y gh; then
+      warn "GitHub CLI package install failed"
+      return 1
+    fi
+    if ! gh --version >/dev/null; then
+      warn "GitHub CLI version check failed"
+      return 1
+    fi
     return 0
   fi
 
-  curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo -o /etc/yum.repos.d/gh-cli.repo
-  "$PKG_BIN" install -y gh
-  gh --version >/dev/null
+  if ! curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo -o /etc/yum.repos.d/gh-cli.repo; then
+    warn "GitHub CLI repository download failed"
+    return 1
+  fi
+  if ! "$PKG_BIN" install -y gh; then
+    warn "GitHub CLI package install failed"
+    return 1
+  fi
+  if ! gh --version >/dev/null; then
+    warn "GitHub CLI version check failed"
+    return 1
+  fi
 }
 
-install_agent_clis_if_requested() {
-  local failures=0
+install_selected_clis() {
+  local failures=0 cli_id
 
   remove_agent_cli_update_timer
+  remove_agent_auth_helper
+  remove_deselected_cli_links
 
-  if [[ "$install_agent_clis" != "1" ]]; then
+  if [[ -z "$selected_clis" ]]; then
     log "developer CLI installation skipped"
     return 0
   fi
 
-  install_codex_cli || {
-    warn "Codex CLI installation failed"
-    failures=$((failures + 1))
-  }
-  install_grok_cli || {
-    warn "Grok CLI installation failed"
-    failures=$((failures + 1))
-  }
-  install_github_cli || {
-    warn "GitHub CLI installation failed"
-    failures=$((failures + 1))
-  }
+  for cli_id in codex grok github pi opencode amp droid claude; do
+    selected_cli "$cli_id" || continue
+    case "$cli_id" in
+      codex) install_codex_cli || { warn "Codex CLI installation failed"; failures=$((failures + 1)); } ;;
+      grok) install_grok_cli || { warn "Grok CLI installation failed"; failures=$((failures + 1)); } ;;
+      github) install_github_cli || { warn "GitHub CLI installation failed"; failures=$((failures + 1)); } ;;
+      pi) install_pi_cli || { warn "Pi CLI installation failed"; failures=$((failures + 1)); } ;;
+      opencode) install_opencode_cli || { warn "OpenCode CLI installation failed"; failures=$((failures + 1)); } ;;
+      amp) install_amp_cli || { warn "Amp CLI installation failed"; failures=$((failures + 1)); } ;;
+      droid) install_droid_cli || { warn "Factory Droid CLI installation failed"; failures=$((failures + 1)); } ;;
+      claude) install_claude_cli || { warn "Claude Code CLI installation failed"; failures=$((failures + 1)); } ;;
+    esac
+  done
 
   if [[ "$failures" -gt 0 ]]; then
     fail "one or more selected developer CLIs failed to install; public SSH remains open"
   fi
 
   install_agent_auth_helper
-  install_agent_cli_update_timer
-  print_agent_cli_versions
+  if has_cli_updates; then
+    install_agent_cli_update_timer
+  fi
+  print_selected_cli_versions
 }
 
 remove_agent_cli_update_timer() {
@@ -1190,6 +1612,120 @@ remove_agent_cli_update_timer() {
     /etc/systemd/system/vpsbuddy-cli-update.timer \
     /usr/local/sbin/vpsbuddy-cli-update
   systemctl daemon-reload
+}
+
+has_cli_updates() {
+  local cli_id
+
+  for cli_id in codex grok pi opencode amp droid claude; do
+    selected_cli "$cli_id" && return 0
+  done
+  return 1
+}
+
+remove_agent_auth_helper() {
+  rm -f /usr/local/bin/vpsbuddy-auth
+}
+
+cli_link_target_is_legacy() {
+  local command_name="$1"
+  local target="$2"
+  local legacy_sudoers legacy_user home_dir sudoers_dir
+
+  sudoers_dir="$legacy_sudoers_dir"
+  [[ -n "$sudoers_dir" ]] || sudoers_dir=/etc/sudoers.d
+  for legacy_sudoers in "$sudoers_dir"/90-vps-bootstrap-*; do
+    [[ -f "$legacy_sudoers" ]] || continue
+    legacy_user="${legacy_sudoers##*/90-vps-bootstrap-}"
+    [[ "$legacy_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || continue
+    home_dir="$(getent passwd "$legacy_user" | cut -d: -f6)"
+    [[ -n "$home_dir" ]] || continue
+
+    case "$command_name" in
+      codex)
+        if [[ "$target" == "$home_dir/.codex/bin/codex" ||
+          "$target" == "$home_dir/.local/bin/codex" ||
+          "$target" == "$home_dir/bin/codex" ]]; then
+          return 0
+        fi
+        ;;
+      grok)
+        [[ "$target" == "$home_dir/.grok/bin/grok" ]] && return 0
+        ;;
+      pi)
+        [[ "$target" == "$home_dir/.local/bin/pi" ]] && return 0
+        ;;
+      opencode)
+        [[ "$target" == "$home_dir/.opencode/bin/opencode" ]] && return 0
+        ;;
+      amp)
+        if [[ "$target" == "$home_dir/.local/bin/amp" ||
+          "$target" == "$home_dir/.amp/bin/amp" ]]; then
+          return 0
+        fi
+        ;;
+      droid | claude)
+        [[ "$target" == "$home_dir/.local/bin/$command_name" ]] && return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+remove_deselected_cli_links() {
+  local command_name target tmp link_path
+
+  if [[ ! -f "$cli_link_manifest" ]]; then
+    tmp="$(mktemp)"
+    for command_name in codex grok pi opencode amp droid claude; do
+      link_path="$cli_link_dir/$command_name"
+      [[ -L "$link_path" ]] || continue
+      target="$(readlink "$link_path")"
+      cli_link_target_is_legacy "$command_name" "$target" || continue
+      if selected_cli "$command_name"; then
+        printf '%s\t%s\n' "$command_name" "$target" >>"$tmp"
+      else
+        rm -f "$link_path"
+      fi
+    done
+    if [[ -s "$tmp" ]]; then
+      install -d -m 0755 "$(dirname "$cli_link_manifest")"
+      if ! sort -u "$tmp" -o "$cli_link_manifest"; then
+        rm -f "$tmp"
+        return 1
+      fi
+    fi
+    rm -f "$tmp"
+    return 0
+  fi
+
+  tmp="$(mktemp)"
+  while IFS=$'\t' read -r command_name target; do
+    case "$command_name" in
+      codex | grok | pi | opencode | amp | droid | claude) ;;
+      *) continue ;;
+    esac
+
+    if selected_cli "$command_name"; then
+      printf '%s\t%s\n' "$command_name" "$target" >>"$tmp"
+      continue
+    fi
+
+    if [[ -L "$cli_link_dir/$command_name" ]] && [[ "$(readlink "$cli_link_dir/$command_name")" == "$target" ]]; then
+      rm -f "$cli_link_dir/$command_name"
+    fi
+  done <"$cli_link_manifest"
+
+  if [[ -s "$tmp" ]]; then
+    install -d -m 0755 "$(dirname "$cli_link_manifest")"
+    if ! sort -u "$tmp" -o "$cli_link_manifest"; then
+      rm -f "$tmp"
+      return 1
+    fi
+  else
+    rm -f "$cli_link_manifest"
+  fi
+  rm -f "$tmp"
 }
 
 install_agent_cli_update_timer() {
@@ -1205,16 +1741,23 @@ set -Eeuo pipefail
 AGENT_CLI_UPDATE_HEAD
     printf 'admin_user=%q\n' "$admin_user"
     printf 'home_dir=%q\n' "$home_dir"
+    printf 'cli_link_dir=%q\n' "$cli_link_dir"
+    printf 'cli_link_manifest=%q\n' "$cli_link_manifest"
+    printf 'selected_clis=%q\n' "$selected_clis"
     agent_audit_prelude
     cat <<'AGENT_CLI_UPDATE_BODY'
 
 run_as_admin() {
-  sudo -H -u "$admin_user" env HOME="$home_dir" SHELL=/bin/bash bash -lc "$1"
+  sudo -H -u "$admin_user" env -i \
+    HOME="$home_dir" \
+    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.local/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/share/pi-node/current/bin:$home_dir/bin" \
+    SHELL=/bin/bash \
+    bash --noprofile --norc -c "set -o pipefail; $1"
 }
 
 admin_command_path() {
   local command_name="$1"
-  local candidate
+  local candidate discovered_path
 
   case "$command_name" in
     codex)
@@ -1224,51 +1767,173 @@ admin_command_path() {
           return 0
         fi
       done
+      candidate=""
       ;;
-    grok | agent)
+    grok)
       candidate="$home_dir/.grok/bin/$command_name"
-      if [[ -x "$candidate" ]]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
       ;;
+    pi) candidate="$home_dir/.local/bin/pi" ;;
+    opencode) candidate="$home_dir/.opencode/bin/opencode" ;;
+    amp)
+      for candidate in "$home_dir/.local/bin/amp" "$home_dir/.amp/bin/amp"; do
+        [[ -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+      done
+      candidate=""
+      ;;
+    droid | claude) candidate="$home_dir/.local/bin/$command_name" ;;
   esac
 
-  run_as_admin "command -v $(printf '%q' "$command_name")" 2>/dev/null || true
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  discovered_path="$(run_as_admin "command -v $(printf '%q' "$command_name")" 2>/dev/null || true)"
+  [[ "$discovered_path" == "$cli_link_dir/$command_name" ]] && return 1
+  printf '%s\n' "$discovered_path"
+}
+
+cli_link_manifest_contains() {
+  local wanted_name="$1"
+  local wanted_target="$2"
+  local existing_name existing_target
+
+  [[ -f "$cli_link_manifest" ]] || return 1
+  while IFS=$'\t' read -r existing_name existing_target; do
+    if [[ "$existing_name" == "$wanted_name" && "$existing_target" == "$wanted_target" ]]; then
+      return 0
+    fi
+  done <"$cli_link_manifest"
+  return 1
+}
+
+record_cli_link() {
+  local command_name="$1"
+  local command_path="$2"
+  local existing_name existing_target tmp
+
+  tmp="$(mktemp)"
+  if [[ -f "$cli_link_manifest" ]]; then
+    while IFS=$'\t' read -r existing_name existing_target; do
+      [[ "$existing_name" == "$command_name" ]] && continue
+      printf '%s\t%s\n' "$existing_name" "$existing_target" >>"$tmp"
+    done <"$cli_link_manifest"
+  fi
+  printf '%s\t%s\n' "$command_name" "$command_path" >>"$tmp"
+  if ! install -d -m 0755 "$(dirname "$cli_link_manifest")"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! sort -u "$tmp" -o "$cli_link_manifest"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
 }
 
 link_admin_command() {
   local command_name="$1"
-  local command_path
+  local command_path link_path existing_target
 
   command_path="$(admin_command_path "$command_name")"
   if [[ -z "$command_path" || ! -x "$command_path" ]]; then
     return 1
   fi
 
-  install -d -m 0755 /usr/local/bin
-  ln -sf "$command_path" "/usr/local/bin/$command_name"
+  install -d -m 0755 "$cli_link_dir"
+  link_path="$cli_link_dir/$command_name"
+  if [[ -e "$link_path" || -L "$link_path" ]]; then
+    if [[ ! -L "$link_path" ]]; then
+      printf '[vpsbuddy] warning: refusing to replace unmanaged CLI command: %s\n' "$link_path" >&2
+      return 1
+    fi
+    existing_target="$(readlink "$link_path")"
+    if [[ "$existing_target" != "$command_path" ]] &&
+      ! cli_link_manifest_contains "$command_name" "$existing_target"; then
+      printf '[vpsbuddy] warning: refusing to replace unmanaged CLI link: %s\n' "$link_path" >&2
+      return 1
+    fi
+  fi
+  if ! ln -sf "$command_path" "$link_path"; then
+    printf '[vpsbuddy] warning: could not link %s to %s\n' "$command_name" "$command_path" >&2
+    return 1
+  fi
+  if ! record_cli_link "$command_name" "$command_path"; then
+    printf '[vpsbuddy] warning: could not record CLI link: %s\n' "$link_path" >&2
+    return 1
+  fi
 }
 
-printf '[vpsbuddy] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
-if run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'; then
-  link_admin_command codex || true
-else
-  printf '[vpsbuddy] warning: Codex CLI update failed; continuing with other agent CLI updates\n' >&2
-fi
+selected_cli() {
+  local cli_id="$1"
+  local selected_id
 
-if run_as_admin 'command -v grok >/dev/null 2>&1'; then
-  printf '[vpsbuddy] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
-  run_as_admin 'grok update' || printf '[vpsbuddy] warning: Grok CLI update failed\n' >&2
-elif [[ -x "$home_dir/.grok/bin/grok" ]]; then
-  printf '[vpsbuddy] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
-  run_as_admin "$(printf '%q' "$home_dir/.grok/bin/grok") update" || printf '[vpsbuddy] warning: Grok CLI update failed\n' >&2
-else
-  printf '[vpsbuddy] installing Grok from xAI official installer; accepted mutable installer trust boundary\n' >&2
-  run_as_admin 'curl -fsSL https://x.ai/cli/install.sh | bash' || printf '[vpsbuddy] warning: Grok CLI install failed\n' >&2
-fi
+  for selected_id in $selected_clis; do
+    [[ "$selected_id" == "$cli_id" ]] && return 0
+  done
+  return 1
+}
 
-link_admin_command grok || true
+failures=0
+for cli_id in codex grok pi opencode amp droid claude; do
+  selected_cli "$cli_id" || continue
+
+  case "$cli_id" in
+    codex)
+      printf '[vpsbuddy] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
+      if ! run_as_admin 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'; then
+        printf '[vpsbuddy] warning: Codex CLI update failed\n' >&2
+        failures=$((failures + 1))
+      fi
+      ;;
+    grok)
+      printf '[vpsbuddy] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
+      if ! run_as_admin 'grok update'; then
+        printf '[vpsbuddy] warning: Grok CLI update failed\n' >&2
+        failures=$((failures + 1))
+      fi
+      ;;
+    pi)
+      printf '[vpsbuddy] updating Pi with pi update --self\n' >&2
+      if ! run_as_admin 'pi update --self'; then
+        printf '[vpsbuddy] warning: Pi CLI update failed\n' >&2
+        failures=$((failures + 1))
+      fi
+      ;;
+    opencode)
+      printf '[vpsbuddy] updating OpenCode with opencode upgrade\n' >&2
+      if ! run_as_admin 'opencode upgrade'; then
+        printf '[vpsbuddy] warning: OpenCode CLI update failed\n' >&2
+        failures=$((failures + 1))
+      fi
+      ;;
+    amp)
+      printf '[vpsbuddy] updating Amp with amp update\n' >&2
+      if ! run_as_admin 'amp update'; then
+        printf '[vpsbuddy] warning: Amp CLI update failed\n' >&2
+        failures=$((failures + 1))
+      fi
+      ;;
+    droid)
+      printf '[vpsbuddy] updating Factory Droid with droid update\n' >&2
+      if ! run_as_admin 'droid update'; then
+        printf '[vpsbuddy] warning: Factory Droid update failed\n' >&2
+        failures=$((failures + 1))
+      fi
+      ;;
+    claude)
+      printf '[vpsbuddy] updating Claude Code with claude update\n' >&2
+      if ! run_as_admin 'claude update'; then
+        printf '[vpsbuddy] warning: Claude Code update failed\n' >&2
+        failures=$((failures + 1))
+      fi
+      ;;
+  esac
+  if ! link_admin_command "$cli_id"; then
+    printf '[vpsbuddy] warning: could not refresh %s command link\n' "$cli_id" >&2
+    failures=$((failures + 1))
+  fi
+done
+exit "$failures"
 AGENT_CLI_UPDATE_BODY
   } >/usr/local/sbin/vpsbuddy-cli-update
 
@@ -1306,19 +1971,41 @@ AGENT_CLI_UPDATE_TIMER
 install_agent_auth_helper() {
   log "installing /usr/local/bin/vpsbuddy-auth"
 
-  cat >/usr/local/bin/vpsbuddy-auth <<'AGENT_AUTH_HELPER'
+  {
+    cat <<'AGENT_AUTH_HELPER_HEAD'
+#!/usr/bin/env bash
+AGENT_AUTH_HELPER_HEAD
+    printf 'selected_clis=%q\n' "$selected_clis"
+    cat <<'AGENT_AUTH_HELPER_BODY'
 SERVER_SCRIPT_BODY
-  cat "$VPSBUDDY_LIB_DIR/templates/vpsbuddy-auth.sh"
+  awk 'seen { print } /^# VPSBUDDY_AUTH_BODY$/ { seen=1 }' \
+    "$VPSBUDDY_LIB_DIR/templates/vpsbuddy-auth.sh"
   cat << 'SERVER_SCRIPT_BODY'
-AGENT_AUTH_HELPER
+AGENT_AUTH_HELPER_BODY
+  } >/usr/local/bin/vpsbuddy-auth
 
   chmod 755 /usr/local/bin/vpsbuddy-auth
 }
 
-print_agent_cli_versions() {
-  printf 'VPSBUDDY_CODEX_VERSION=%s\n' "$(codex --version 2>/dev/null | head -n 1 || true)"
-  printf 'VPSBUDDY_GROK_VERSION=%s\n' "$(grok --version 2>/dev/null | head -n 1 || true)"
-  printf 'VPSBUDDY_GH_VERSION=%s\n' "$(gh --version 2>/dev/null | head -n 1 || true)"
+print_selected_cli_versions() {
+  local home_dir cli_id command_name output_key version
+
+  home_dir="$(admin_home_dir)"
+  for cli_id in codex grok github pi opencode amp droid claude; do
+    selected_cli "$cli_id" || continue
+    case "$cli_id" in
+      codex) command_name=codex; output_key=CODEX ;;
+      grok) command_name=grok; output_key=GROK ;;
+      github) command_name=gh; output_key=GH ;;
+      pi) command_name=pi; output_key=PI ;;
+      opencode) command_name=opencode; output_key=OPENCODE ;;
+      amp) command_name=amp; output_key=AMP ;;
+      droid) command_name=droid; output_key=DROID ;;
+      claude) command_name=claude; output_key=CLAUDE ;;
+    esac
+    version="$(run_as_admin "$home_dir" "$command_name --version" 2>/dev/null | head -n 1 || true)"
+    printf 'VPSBUDDY_%s_VERSION=%s\n' "$output_key" "$version"
+  done
 }
 
 ensure_admin_user() {
@@ -1604,11 +2291,13 @@ validate_prepare_state() {
 
 run_prepare() {
   require_root
+  validate_selected_clis_server
   validate_admin_user_server
   validate_hostname_server
   select_platform
   install_required_packages
   remove_legacy_vps_bootstrap_timers
+  remove_deselected_cli_links
   install_swap
   enable_service "$SSHD_SERVICE"
   configure_automatic_updates
@@ -1620,7 +2309,7 @@ run_prepare() {
   disable_tailscale_ssh_for_verification
   configure_firewall prepare
   validate_prepare_state
-  install_agent_clis_if_requested
+  install_selected_clis
 
   printf 'VPSBUDDY_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
   printf 'VPSBUDDY_FIREWALL=%s\n' "$FIREWALL_BACKEND"
@@ -1630,6 +2319,7 @@ run_prepare() {
 
 run_harden() {
   require_root
+  validate_selected_clis_server
   validate_admin_user_server
   validate_hostname_server
   select_platform
@@ -1668,7 +2358,7 @@ generate_server_config_prelude() {
   printf 'requested_hostname=%q\n' "$VPS_HOSTNAME"
   printf 'enable_tailscale_ssh=%q\n' "$VPS_ENABLE_TAILSCALE_SSH"
   printf 'web_enabled=%q\n' "$VPS_WEB"
-  printf 'install_agent_clis=%q\n' "$VPS_INSTALL_AGENT_CLIS"
+  printf 'selected_clis=%q\n' "$VPS_SELECTED_CLIS"
   printf 'automatic_updates=%q\n' "$VPS_AUTOMATIC_UPDATES"
   printf 'full_sudo=%q\n' "$VPS_FULL_SUDO"
   printf 'swap_enabled=%q\n' "$VPS_SWAP_ENABLED"
@@ -1748,7 +2438,7 @@ Public inbound policy:
 Mirror this policy in the VPS provider firewall.
 SUMMARY
 
-  if [[ "$VPS_INSTALL_AGENT_CLIS" == "1" ]]; then
+  if [[ -n "$VPS_SELECTED_CLIS" ]]; then
     cat << 'AUTH'
 
 Authenticate the developer CLIs while logged in as the admin user:

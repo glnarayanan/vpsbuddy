@@ -29,9 +29,11 @@ curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.s
 ```
 
 The installer asks for every operator choice: admin user, SSH public key,
-optional hostname, swap, public web ports, Codex/Grok/GitHub CLI installation,
+optional hostname, swap, public web ports, a numbered developer CLI selection
+(Codex, Grok, GitHub CLI, Pi, OpenCode, Amp, Factory Droid, or Claude Code),
 automatic OS updates, scoped or full passwordless sudo, and optional Tailscale
-SSH. There is no default admin name or swap size. Active swap is left unchanged.
+SSH. Blank CLI input is rejected; use `all` or `none` when that is clearer.
+There is no default admin name or swap size. Active swap is left unchanged.
 
 ## Safe Hardening Flow
 
@@ -53,7 +55,15 @@ stays open.
 - The admin user gets passwordless access to root-owned `vpsbuddy-*` helpers
   unless full sudo was chosen.
 - `/swapfile` is created only when requested and no swap is active.
-- OS and developer CLI timers are installed only when selected.
+- `vpsbuddy-os-update.timer` is installed only when automatic OS updates are
+  selected.
+- `vpsbuddy-cli-update.timer` is installed only when a selected CLI has a
+  self-update command; it is omitted for `none` and GitHub CLI alone.
+
+Selected CLI links in `/usr/local/bin` are recorded in
+`/var/lib/vpsbuddy/cli-links`. Reruns remove links managed by vpsbuddy. If an old
+`vps-bootstrap` ownership record remains, they also remove links left by that
+admin. They refuse to replace unmanaged files.
 
 When developer CLIs are installed, authenticate after setup:
 
@@ -63,6 +73,7 @@ vpsbuddy-auth --all
 vpsbuddy-auth --status
 ```
 
+`vpsbuddy-auth --all` and `--status` cover only the CLIs selected during setup.
 `vpsbuddy` does not ask for or store CLI tokens.
 
 Mirror the final host firewall policy in the VPS provider firewall: no public

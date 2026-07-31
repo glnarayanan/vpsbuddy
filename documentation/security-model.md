@@ -77,15 +77,23 @@ before Tailnet verification.
 
 ## Developer CLI Credentials
 
-Codex, Grok, and GitHub CLI are installed only when selected. Bootstrap does not
-ask for or store their tokens. Authenticate after setup with `vpsbuddy-auth`.
-CLI install and update paths trust official mutable upstream endpoints.
+Codex, Grok, GitHub CLI, Pi, OpenCode, Amp, Factory Droid, and Claude Code are
+installed only when selected. Bootstrap does not ask for or store their tokens.
+Installers run as the chosen admin user, not root. GitHub CLI uses its signed
+apt or rpm repository; the other CLI install and update paths trust official
+mutable upstream endpoints. Authenticate after setup with `vpsbuddy-auth`.
+The helper runs auth flows only for selected CLIs, and `xdg-utils` is installed
+only when Factory Droid is selected.
 
 ## Updates
 
 When selected, `vpsbuddy-os-update.timer` runs every two weeks. Apt hosts also
-receive matching unattended-upgrades setup. When developer CLIs are selected,
-`vpsbuddy-cli-update.timer` runs every two days.
+receive matching unattended-upgrades setup. When a selected developer CLI
+has a self-update command, `vpsbuddy-cli-update.timer` runs every two days. It is not installed for `none`
+or for GitHub CLI alone; GitHub updates through the package manager. The timer
+tries each selected CLI and refreshes its recorded command link. It exits with a
+failure status if any update or link refresh fails, so systemd records the run
+as failed.
 
 ## Tailscale SSH
 
