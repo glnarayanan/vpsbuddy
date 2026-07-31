@@ -63,9 +63,11 @@ repository is configured.
 A selected CLI installer or CLI helper failure does not stop VPS setup. vpsbuddy
 records failed installers, continues to Tailnet login verification, and hardens
 SSH only after the operator confirms that login. The final summary prints an
-official repair command for each failed tool. Deselecting a CLI stops vpsbuddy
-management but does not uninstall a third-party tool. The CLI update timer is
-omitted for `none` and GitHub CLI alone.
+official repair command for each failed tool. User-scoped installers have a
+15-minute deadline, so a stalled optional installer cannot block the Tailnet
+gate forever. Deselecting a CLI stops vpsbuddy management but does not uninstall
+a third-party tool. The CLI update timer is omitted for `none` and GitHub CLI
+alone.
 
 After setup, log in as the admin user and run:
 

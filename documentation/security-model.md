@@ -87,25 +87,27 @@ dnf, or yum package manager. Each selected GitHub CLI run validates downloaded
 repository data, pins apt to the official source or limits rpm package commands
 to the `gh-cli` repository, and replaces `gh` from that source. CLI checks and
 updates use each managed user binary by its full path. System tools stay ahead
-of other user-writable directories. The other CLI install and update paths
-trust official mutable upstream
-endpoints. Authenticate after setup with `vpsbuddy-auth`.
+of other user-writable directories. The other CLI install and update paths trust
+official mutable upstream endpoints. User-scoped installers have a 15-minute
+deadline. Authenticate after setup with `vpsbuddy-auth`.
 The helper runs auth flows only for selected CLIs, and `xdg-utils` is installed
 only when Factory Droid is selected.
 
 ## Updates
 
 When selected, `vpsbuddy-os-update.timer` runs every two weeks. Apt hosts also
-receive matching unattended-upgrades setup. When a selected developer CLI
-has a self-update command, `vpsbuddy-cli-update.timer` runs every two days. It is not installed for `none`
-or for GitHub CLI alone; GitHub updates through the package manager. The timer tries each selected CLI and refreshes its recorded command link. It
-exits with a failure status if any update or link refresh fails, so systemd
-records the run as failed.
+receive matching unattended-upgrades setup. When a selected developer CLI has a
+self-update command, `vpsbuddy-cli-update.timer` runs every two days. It is not
+installed for `none` or for GitHub CLI alone; GitHub updates through the package
+manager. The timer tries each selected CLI and refreshes its recorded command
+link. It exits with a failure status if any update or link refresh fails, so
+systemd records the run as failed.
 
 ## Resume State
 
 vpsbuddy saves the confirmed setup plan before it changes the server. The state
-directory uses mode `0700`; plan, phase, and failed-CLI files use mode `0600`.
+directory uses mode `0700`; plan, phase, failed-CLI, and CLI-link files use mode
+`0600`.
 Resume checks that the directory and plan are not symlinks, belong to the
 running root user, and have no group or other access before loading the plan.
 Each loaded field passes the same validation as guided input. Phase values are

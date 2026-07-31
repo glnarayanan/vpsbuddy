@@ -99,17 +99,10 @@ TCP 22, and public TCP 80/443 only when chosen. See
 
 ## Resume and Recovery
 
-Before the first server change, vpsbuddy saves the confirmed plan with mode
-`0600` in a `0700` state directory. It records `preparing`, `prepared`,
-`hardening`, or `complete` after each safe boundary.
-
-On `--resume`, vpsbuddy checks the state owner, file type, and mode before it
-loads any value. It rejects symlinked or group-readable state. A saved
-`prepared` or `hardening` run skips package and user setup, checks the admin
-sudo helper and Tailscale again, and still waits for an explicit Tailnet login
-confirmation before hardening. If an older partial install has no saved plan,
-`--resume` starts the guided prompts and saves a new recovery plan before it
-changes the VPS.
+vpsbuddy saves each confirmed plan and safe phase. Use `--resume` after a pause,
+failed core step, or lost terminal. It checks saved state before use and still
+requires explicit Tailnet login approval before hardening. See
+[Reruns and Resume](documentation/README.md#reruns-and-resume).
 
 ## Supported Hosts
 

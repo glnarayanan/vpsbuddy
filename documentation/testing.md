@@ -29,7 +29,8 @@ installed. CI runs the same command in its formatter job.
   mixed or extra repository settings, and package installs that are not limited
   or pinned to the official source
 - installer and CLI-management failures remain optional and do not block
-  Tailnet verification or hardening
+  Tailnet verification or hardening; user-scoped installers have a fixed
+  deadline and the Codex download has its own time limit
 - Pi version and update commands use its private Node while system tools stay
   ahead of other user-writable CLI directories; managed CLI commands run by full
   path even when a system command has the same name
@@ -42,8 +43,9 @@ installed. CI runs the same command in its formatter job.
 - legacy CLI-link migration requires an old `vps-bootstrap` ownership record
 - updater failures return a failure status
 - safe shell quoting in the generated phase prelude
-- private resume-plan round trips, phase checkpoints, prepared-phase skipping,
-  and rejection of group-writable or symlinked state
+- private resume-plan round trips, all phase checkpoints, guided recovery with
+  no saved plan, prepared-phase skipping, and rejection of group-writable or
+  symlinked state; CLI-link writes preserve private resume-state modes
 - failed CLI recovery output uses the official installer commands
 
 These tests do not change host files or run `sshd` and systemd failure paths.

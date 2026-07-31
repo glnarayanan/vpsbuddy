@@ -309,6 +309,45 @@ test_generated_installer_failure_is_not_masked() {
   rm -rf "$server_fixture" "$home_dir" "$link_dir"
 }
 
+test_generated_cli_installers_have_a_deadline() {
+  local output server_fixture server_script
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-cli-timeout.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  output="$(
+    bash -c '
+      set -Eeuo pipefail
+      phase=prepare
+      admin_user=deploy
+      public_key=ssh-ed25519
+      requested_hostname=
+      enable_tailscale_ssh=0
+      web_enabled=1
+      selected_clis=codex
+      selected_clis_present=1
+      automatic_updates=0
+      full_sudo=0
+      swap_enabled=0
+      swap_size=
+      source "$1"
+      admin_home_dir() { printf "/home/deploy\n"; }
+      run_as_admin() {
+        printf "%s\n" "$2"
+        return 124
+      }
+      if install_codex_cli; then
+        exit 1
+      fi
+    ' bash "$server_fixture" 2>&1
+  )"
+
+  assert_contains "optional CLI installers stop after a fixed deadline" "$output" "--foreground --kill-after=30s 15m"
+  assert_contains "Codex installer bounds its download time" "$server_script" "--connect-timeout 15 --max-time 120"
+  assert_contains "timed-out Codex install is reported as optional failure" "$output" "Codex CLI installer command failed"
+  rm -f "$server_fixture"
+}
+
 test_generated_cli_link_cleanup() {
   local server_script server_fixture link_dir manifest target legacy_sudoers_dir legacy_home legacy_target
   server_script="$(generate_server_script)"
@@ -1030,16 +1069,16 @@ FAKE_CURL
   ' bash "$server_fixture" "$link_dir" "$home_dir" "$bin_dir"; then
     output="$(cat "$record")"
     for expected in \
-      "curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused https://chatgpt.com/codex/install.sh" \
-      "curl -fsSL https://x.ai/cli/install.sh | bash" \
+      "curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused --connect-timeout 15 --max-time 120 https://chatgpt.com/codex/install.sh" \
+      "https://x.ai/cli/install.sh" \
       "github-package-manager" \
-      "curl -fsSL https://pi.dev/install.sh | sh" \
-      "curl -fsSL https://opencode.ai/install | bash" \
+      "https://pi.dev/install.sh" \
+      "https://opencode.ai/install" \
       "mkdir -p \"\$HOME/.local/bin\"" \
-      "curl -fsSL https://ampcode.com/install.sh | bash" \
+      "https://ampcode.com/install.sh" \
       "xdg-utils" \
-      "curl -fsSL https://app.factory.ai/cli | sh" \
-      "curl -fsSL https://claude.ai/install.sh | bash"; do
+      "https://app.factory.ai/cli" \
+      "https://claude.ai/install.sh"; do
       assert_contains "selected CLI dispatch runs $expected" "$output" "$expected"
     done
 
@@ -1208,7 +1247,7 @@ CURL
   ' bash "$server_fixture" "$link_dir" "$home_dir" "$bin_dir"; then
     output="$(cat "$record")"
     assert_contains "Droid-only selection installs xdg-utils" "$output" "apt-get install -y xdg-utils"
-    assert_contains "Droid-only selection runs the Factory installer" "$output" "curl -fsSL https://app.factory.ai/cli | sh"
+    assert_contains "Droid-only selection runs the Factory installer" "$output" "https://app.factory.ai/cli"
     assert_not_contains "Droid-only selection skips Pi installer" "$output" "pi.dev/install.sh"
     [[ -f "$xdg_state" ]]
     [[ -x "$home_dir/.local/bin/droid" ]]
@@ -1921,8 +1960,9 @@ test_resume_options_are_accepted() {
 }
 
 test_resume_plan_round_trip() {
-  local state_dir public_key
+  local server_fixture state_dir public_key
   state_dir="$(mktemp -d /tmp/vpsbuddy-resume-state.XXXXXX)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-resume-server.XXXXXX)"
   public_key="$(cat tests/fixtures/id_ed25519.pub)"
   chmod 700 "$state_dir"
 
@@ -1943,6 +1983,26 @@ test_resume_plan_round_trip() {
   save_resume_plan
   write_bootstrap_status prepared
 
+  generate_server_script | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+  bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=0
+    selected_clis=
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    bootstrap_state_dir="$2"
+    source "$1"
+    record_cli_link codex /home/deploy/.codex/bin/codex
+  ' bash "$server_fixture" "$state_dir"
+
   reset_config
   VPS_STATE_DIR="$state_dir"
   if load_resume_plan; then
@@ -1957,7 +2017,8 @@ test_resume_plan_round_trip() {
 
   assert_eq "resume plan is private" "600" "$(state_file_mode "$state_dir/bootstrap-plan")"
   assert_eq "resume state directory is private" "700" "$(state_file_mode "$state_dir")"
-  rm -rf "$state_dir"
+  assert_eq "CLI link manifest is private" "600" "$(state_file_mode "$state_dir/cli-links")"
+  rm -rf "$server_fixture" "$state_dir"
 }
 
 test_resume_rejects_untrusted_state() {
@@ -2049,7 +2110,8 @@ test_cli_management_failure_does_not_abort_prepare() {
   rm -rf "$server_fixture" "$state_dir"
 }
 
-test_prepared_resume_skips_prepare_and_hardens() {
+run_saved_resume_phase() {
+  local saved_phase="$1"
   local output public_key state_dir
   public_key="$(cat tests/fixtures/id_ed25519.pub)"
   state_dir="$(mktemp -d /tmp/vpsbuddy-resume-flow.XXXXXX)"
@@ -2072,7 +2134,7 @@ test_prepared_resume_skips_prepare_and_hardens() {
       VPS_FULL_SUDO=0
       VPS_ENABLE_TAILSCALE_SSH=0
       save_resume_plan
-      write_bootstrap_status prepared
+      write_bootstrap_status "$1"
 
       exec 3<<<"yes
 yes"
@@ -2083,13 +2145,84 @@ yes"
       verify_prepared_admin() { :; }
       print_completion_summary() { printf "summary:%s\n" "$1"; }
       main --resume
-    ' 2>&1
+      printf "saved-status:%s\n" "$(cat "$VPS_STATE_DIR/bootstrap-status")"
+    ' bash "$saved_phase" 2>&1
   )"
+
+  rm -rf "$state_dir"
+  printf '%s\n' "$output"
+}
+
+test_prepared_resume_skips_prepare_and_hardens() {
+  local output
+
+  output="$(run_saved_resume_phase prepared)"
 
   assert_not_contains "prepared resume does not repeat prepare" "$output" "phase:prepare"
   assert_contains "prepared resume still runs hardening" "$output" "phase:harden"
   assert_contains "prepared resume completes" "$output" "summary:100.64.0.10"
-  assert_eq "prepared resume records completion" "complete" "$(cat "$state_dir/bootstrap-status")"
+  assert_contains "prepared resume records completion" "$output" "saved-status:complete"
+}
+
+test_other_resume_phases_follow_safe_boundaries() {
+  local complete_output hardening_output preparing_output
+
+  preparing_output="$(run_saved_resume_phase preparing)"
+  assert_order "preparing resume repeats prepare before hardening" "$preparing_output" "phase:prepare" "phase:harden"
+  assert_contains "preparing resume records completion" "$preparing_output" "saved-status:complete"
+
+  hardening_output="$(run_saved_resume_phase hardening)"
+  assert_not_contains "hardening resume does not repeat prepare" "$hardening_output" "phase:prepare"
+  assert_contains "hardening resume safely repeats hardening" "$hardening_output" "phase:harden"
+  assert_contains "hardening resume records completion" "$hardening_output" "saved-status:complete"
+
+  complete_output="$(run_saved_resume_phase complete)"
+  assert_not_contains "complete resume does not run prepare" "$complete_output" "phase:prepare"
+  assert_not_contains "complete resume does not run hardening" "$complete_output" "phase:harden"
+  assert_contains "complete resume reports the server" "$complete_output" "summary:100.64.0.10"
+  assert_contains "complete resume leaves the checkpoint complete" "$complete_output" "saved-status:complete"
+}
+
+test_resume_without_saved_plan_starts_guided_recovery() {
+  local output public_key state_dir
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+  state_dir="$(mktemp -d /tmp/vpsbuddy-resume-recovery.XXXXXX)"
+
+  output="$(
+    TEST_PUBLIC_KEY="$public_key" VPSBUDDY_STATE_DIR="$state_dir" bash -c '
+      set -Eeuo pipefail
+      source lib/vpsbuddy.sh
+      collect_configuration() {
+        VPS_ADMIN_USER=deploy
+        VPS_PUBLIC_KEY="$TEST_PUBLIC_KEY"
+        VPS_HOSTNAME=
+        VPS_SWAP_ENABLED=0
+        VPS_SWAP_SIZE=
+        VPS_SWAP_ACTION="leave disabled"
+        VPS_WEB=0
+        VPS_SELECTED_CLIS=
+        VPS_SELECTED_CLIS_PRESENT=1
+        VPS_AUTOMATIC_UPDATES=0
+        VPS_FULL_SUDO=0
+        VPS_ENABLE_TAILSCALE_SSH=0
+      }
+      configuration_summary() { :; }
+      require_vps_root() { :; }
+      run_server_phase() { printf "phase:%s\n" "$1"; }
+      tailnet_ipv4() { printf "100.64.0.10\n"; }
+      verify_prepared_admin() { :; }
+      print_completion_summary() { printf "summary:%s\n" "$1"; }
+      exec 3<<<"yes
+yes"
+      VPS_INPUT_FD=3
+      main --resume
+      printf "saved-status:%s\n" "$(cat "$VPS_STATE_DIR/bootstrap-status")"
+    ' 2>&1
+  )"
+
+  assert_contains "resume without a plan starts guided recovery" "$output" "No trusted saved plan was found"
+  assert_order "guided recovery prepares before hardening" "$output" "phase:prepare" "phase:harden"
+  assert_contains "guided recovery completes" "$output" "saved-status:complete"
   rm -rf "$state_dir"
 }
 
@@ -2282,6 +2415,7 @@ test_selected_cli_prompt_accepts_formats
 test_generated_selected_cli_behavior
 test_generated_missing_cli_selection_state
 test_generated_installer_failure_is_not_masked
+test_generated_cli_installers_have_a_deadline
 test_generated_cli_link_cleanup
 test_generated_cli_link_safety
 test_successful_rerun_deselects_managed_cli
@@ -2307,6 +2441,8 @@ test_resume_rejects_untrusted_state
 test_failed_cli_recovery_commands_are_printed
 test_cli_management_failure_does_not_abort_prepare
 test_prepared_resume_skips_prepare_and_hardens
+test_other_resume_phases_follow_safe_boundaries
+test_resume_without_saved_plan_starts_guided_recovery
 test_tailnet_confirmation_controls_hardening
 test_legacy_ssh_orchestration_is_removed
 test_checkout_free_installer_downloads_and_runs_bundle

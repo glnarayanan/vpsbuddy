@@ -4,8 +4,9 @@
 
 - https://developers.openai.com/codex/cli
 - Install: `curl -fsSL https://chatgpt.com/codex/install.sh | sh`
-- vpsbuddy downloads that installer with bounded retries, then runs it with
-  `CODEX_NON_INTERACTIVE=1`
+- vpsbuddy downloads that installer with bounded retries and a two-minute
+  download limit, then runs it with `CODEX_NON_INTERACTIVE=1` inside the shared
+  15-minute optional-installer deadline
 - Auth: `codex login` via `vpsbuddy-auth`
 
 ## Grok CLI

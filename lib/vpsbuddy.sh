@@ -1425,6 +1425,17 @@ run_as_admin() {
     /bin/bash --noprofile --norc -c "set -o pipefail; $command"
 }
 
+run_as_admin_with_timeout() {
+  local home_dir="$1"
+  local command="$2"
+  local quoted_command quoted_timeout timeout_path
+
+  timeout_path="$(command -v timeout)" || return 1
+  printf -v quoted_command '%q' "$command"
+  printf -v quoted_timeout '%q' "$timeout_path"
+  run_as_admin "$home_dir" "$quoted_timeout --foreground --kill-after=30s 15m /bin/bash --noprofile --norc -c $quoted_command"
+}
+
 admin_command_path() {
   local home_dir="$1"
   local command_name="$2"
@@ -1516,7 +1527,7 @@ record_cli_link() {
     done <"$cli_link_manifest"
   fi
   printf '%s\t%s\n' "$command_name" "$command_path" >>"$tmp"
-  if ! install -d -m 0755 "$(dirname "$cli_link_manifest")"; then
+  if ! install -d -m 0700 "$(dirname "$cli_link_manifest")"; then
     rm -f "$tmp"
     return 1
   fi
@@ -1524,6 +1535,7 @@ record_cli_link() {
     rm -f "$tmp"
     return 1
   fi
+  chmod 0600 "$cli_link_manifest"
   rm -f "$tmp"
 }
 
@@ -1566,7 +1578,7 @@ install_codex_cli() {
   home_dir="$(admin_home_dir)"
   log "installing/updating official Codex CLI for $admin_user"
   warn "executing OpenAI's mutable official Codex installer; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'installer="$(mktemp)"; installer_status=0; curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused https://chatgpt.com/codex/install.sh -o "$installer" && CODEX_NON_INTERACTIVE=1 sh "$installer" || installer_status=$?; rm -f "$installer"; exit "$installer_status"'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'installer="$(mktemp)"; trap '\''rm -f "$installer"'\'' EXIT; curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused --connect-timeout 15 --max-time 120 https://chatgpt.com/codex/install.sh -o "$installer" && CODEX_NON_INTERACTIVE=1 sh "$installer"'; then
     warn "Codex CLI installer command failed"
     warn "retry later as $admin_user: curl -fsSL https://chatgpt.com/codex/install.sh | sh"
     return 1
@@ -1599,7 +1611,7 @@ install_grok_cli() {
   else
     log "installing official Grok CLI for $admin_user"
     warn "executing xAI's mutable official Grok installer; this is an accepted supply-chain trust boundary"
-    if ! run_as_admin "$home_dir" 'curl -fsSL https://x.ai/cli/install.sh | bash'; then
+    if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://x.ai/cli/install.sh | bash'; then
       warn "Grok CLI installer command failed"
       return 1
     fi
@@ -1649,7 +1661,7 @@ install_pi_cli() {
   home_dir="$(admin_home_dir)"
   log "installing official Pi CLI for $admin_user"
   warn "executing Pi's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://pi.dev/install.sh | sh'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://pi.dev/install.sh | sh'; then
     warn "Pi CLI installer command failed"
     return 1
   fi
@@ -1669,7 +1681,7 @@ install_opencode_cli() {
   home_dir="$(admin_home_dir)"
   log "installing official OpenCode CLI for $admin_user"
   warn "executing OpenCode's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://opencode.ai/install | bash'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://opencode.ai/install | bash'; then
     warn "OpenCode CLI installer command failed"
     return 1
   fi
@@ -1693,7 +1705,7 @@ install_amp_cli() {
     warn "Amp CLI bin directory setup failed"
     return 1
   fi
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://ampcode.com/install.sh | bash'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://ampcode.com/install.sh | bash'; then
     warn "Amp CLI installer command failed"
     return 1
   fi
@@ -1715,7 +1727,7 @@ install_droid_cli() {
   install_droid_package || return 1
   log "installing official Factory Droid CLI for $admin_user"
   warn "executing Factory's mutable official installer as $admin_user; it stops running droid processes while replacing the binary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://app.factory.ai/cli | sh'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://app.factory.ai/cli | sh'; then
     warn "Factory Droid CLI installer command failed"
     return 1
   fi
@@ -1735,7 +1747,7 @@ install_claude_cli() {
   home_dir="$(admin_home_dir)"
   log "installing official Claude Code CLI for $admin_user"
   warn "executing Claude Code's mutable official installer as $admin_user; this is an accepted supply-chain trust boundary"
-  if ! run_as_admin "$home_dir" 'curl -fsSL https://claude.ai/install.sh | bash'; then
+  if ! run_as_admin_with_timeout "$home_dir" 'curl -fsSL https://claude.ai/install.sh | bash'; then
     warn "Claude Code CLI installer command failed"
     return 1
   fi
@@ -2123,11 +2135,12 @@ remove_deselected_cli_links() {
       fi
     done
     if [[ -s "$tmp" ]]; then
-      install -d -m 0755 "$(dirname "$cli_link_manifest")"
+      install -d -m 0700 "$(dirname "$cli_link_manifest")"
       if ! sort -u "$tmp" -o "$cli_link_manifest"; then
         rm -f "$tmp"
         return 1
       fi
+      chmod 0600 "$cli_link_manifest"
     fi
     rm -f "$tmp"
     return 0
@@ -2151,11 +2164,12 @@ remove_deselected_cli_links() {
   done <"$cli_link_manifest"
 
   if [[ -s "$tmp" ]]; then
-    install -d -m 0755 "$(dirname "$cli_link_manifest")"
+    install -d -m 0700 "$(dirname "$cli_link_manifest")"
     if ! sort -u "$tmp" -o "$cli_link_manifest"; then
       rm -f "$tmp"
       return 1
     fi
+    chmod 0600 "$cli_link_manifest"
   else
     rm -f "$cli_link_manifest"
   fi
@@ -2187,6 +2201,16 @@ run_as_admin() {
     PATH="$home_dir/.local/share/pi-node/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin" \
     SHELL=/bin/bash \
     /bin/bash --noprofile --norc -c "set -o pipefail; $1"
+}
+
+run_as_admin_with_timeout() {
+  local command="$1"
+  local quoted_command quoted_timeout timeout_path
+
+  timeout_path="$(command -v timeout)" || return 1
+  printf -v quoted_command '%q' "$command"
+  printf -v quoted_timeout '%q' "$timeout_path"
+  run_as_admin "$quoted_timeout --foreground --kill-after=30s 15m /bin/bash --noprofile --norc -c $quoted_command"
 }
 
 admin_command_path() {
@@ -2266,7 +2290,7 @@ record_cli_link() {
     done <"$cli_link_manifest"
   fi
   printf '%s\t%s\n' "$command_name" "$command_path" >>"$tmp"
-  if ! install -d -m 0755 "$(dirname "$cli_link_manifest")"; then
+  if ! install -d -m 0700 "$(dirname "$cli_link_manifest")"; then
     rm -f "$tmp"
     return 1
   fi
@@ -2274,6 +2298,7 @@ record_cli_link() {
     rm -f "$tmp"
     return 1
   fi
+  chmod 0600 "$cli_link_manifest"
   rm -f "$tmp"
 }
 
@@ -2326,7 +2351,7 @@ for cli_id in codex grok pi opencode amp droid claude; do
   case "$cli_id" in
     codex)
       printf '[vpsbuddy] updating Codex from OpenAI official installer; accepted mutable installer trust boundary\n' >&2
-      if ! run_as_admin 'installer="$(mktemp)"; installer_status=0; curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused https://chatgpt.com/codex/install.sh -o "$installer" && CODEX_NON_INTERACTIVE=1 sh "$installer" || installer_status=$?; rm -f "$installer"; exit "$installer_status"'; then
+      if ! run_as_admin_with_timeout 'installer="$(mktemp)"; trap '\''rm -f "$installer"'\'' EXIT; curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused --connect-timeout 15 --max-time 120 https://chatgpt.com/codex/install.sh -o "$installer" && CODEX_NON_INTERACTIVE=1 sh "$installer"'; then
         printf '[vpsbuddy] warning: Codex CLI update failed\n' >&2
         failures=$((failures + 1))
       fi
