@@ -45,8 +45,10 @@ firewalld.
 The final SSH policy disables password authentication and root login. OpenSSH
 remains available on the Tailscale interface for the admin user.
 
-If prepare, the local sudo check, or manual Tailnet verification fails, harden
-does not run and public SSH stays open.
+If core prepare work, the local sudo check, or manual Tailnet verification
+fails, harden does not run and public SSH stays open. Developer CLI install and
+management failures are optional. They are recorded and reported, but they do
+not stop the Tailnet check or an operator-approved harden phase.
 
 ## Sudo and Helpers
 
@@ -96,10 +98,22 @@ only when Factory Droid is selected.
 When selected, `vpsbuddy-os-update.timer` runs every two weeks. Apt hosts also
 receive matching unattended-upgrades setup. When a selected developer CLI
 has a self-update command, `vpsbuddy-cli-update.timer` runs every two days. It is not installed for `none`
-or for GitHub CLI alone; GitHub updates through the package manager. The timer
-tries each selected CLI and refreshes its recorded command link. It exits with a
-failure status if any update or link refresh fails, so systemd records the run
-as failed.
+or for GitHub CLI alone; GitHub updates through the package manager. The timer tries each selected CLI and refreshes its recorded command link. It
+exits with a failure status if any update or link refresh fails, so systemd
+records the run as failed.
+
+## Resume State
+
+vpsbuddy saves the confirmed setup plan before it changes the server. The state
+directory uses mode `0700`; plan, phase, and failed-CLI files use mode `0600`.
+Resume checks that the directory and plan are not symlinks, belong to the
+running root user, and have no group or other access before loading the plan.
+Each loaded field passes the same validation as guided input. Phase values are
+limited to `preparing`, `prepared`, `hardening`, and `complete`.
+
+Resume never treats a saved phase as proof that Tailnet login works. Before
+hardening, it checks the admin sudo helper and Tailscale address again, then
+waits for the operator to confirm a real login from another Tailnet device.
 
 ## Tailscale SSH
 

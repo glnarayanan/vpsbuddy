@@ -28,7 +28,8 @@ installed. CI runs the same command in its formatter job.
 - GitHub CLI package setup rejects an unmanaged PATH binary, invalid key data,
   mixed or extra repository settings, and package installs that are not limited
   or pinned to the official source
-- failed CLI reruns keep the prior auth helper and update timer
+- installer and CLI-management failures remain optional and do not block
+  Tailnet verification or hardening
 - Pi version and update commands use its private Node while system tools stay
   ahead of other user-writable CLI directories; managed CLI commands run by full
   path even when a system command has the same name
@@ -36,11 +37,14 @@ installed. CI runs the same command in its formatter job.
 - Factory Droid alone installs `xdg-utils`
 - successful reruns remove deselected managed links and state while retaining
   third-party binaries; unmanaged links remain untouched
-- forced prepare installer failure stops before hardening starts
+- forced installer failure still reaches the Tailnet gate and hardening
 - no CLI update timer for `none` or GitHub CLI alone
 - legacy CLI-link migration requires an old `vps-bootstrap` ownership record
 - updater failures return a failure status
 - safe shell quoting in the generated phase prelude
+- private resume-plan round trips, phase checkpoints, prepared-phase skipping,
+  and rejection of group-writable or symlinked state
+- failed CLI recovery output uses the official installer commands
 
 These tests do not change host files or run `sshd` and systemd failure paths.
 Before release, run the guided installer and rename migration on disposable VPS

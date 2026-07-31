@@ -3,7 +3,9 @@
 ## Codex CLI
 
 - https://developers.openai.com/codex/cli
-- Install: `curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh`
+- Install: `curl -fsSL https://chatgpt.com/codex/install.sh | sh`
+- vpsbuddy downloads that installer with bounded retries, then runs it with
+  `CODEX_NON_INTERACTIVE=1`
 - Auth: `codex login` via `vpsbuddy-auth`
 
 ## Grok CLI
