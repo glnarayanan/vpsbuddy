@@ -7,7 +7,7 @@ updates:
       interval: weekly
       day: monday
       time: "05:30"
-      timezone: Asia/Kolkata
+      timezone: Etc/UTC
     groups:
       github-actions:
         patterns:

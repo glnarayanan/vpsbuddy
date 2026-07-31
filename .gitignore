@@ -1,6 +1,16 @@
 .DS_Store
 *.log
 *.tmp
+*.pem
+*.key
+.env
+.env.*
+auth.json
+id_rsa
+id_ed25519
+id_ecdsa
+id_*
+!tests/fixtures/*.pub
 
 .cache/
 coverage/
@@ -8,3 +18,4 @@ tmp/
 
 .vscode/
 .idea/
+.codegraph/

@@ -1,66 +1,47 @@
 # Testing
 
-This project uses a lightweight Bash test harness so tests can run without mutating a real VPS.
-
-Run the full local check:
-
 ```bash
 make check
 ```
 
-Run tests only:
+ShellCheck is used when present. Otherwise lint falls back to `bash -n`.
+`make check` also runs the repository's exact `shfmt` command when `shfmt` is
+installed. CI runs the same command in its formatter job.
 
-```bash
-make test
-```
+## Covered Locally
 
-Run linting only:
+- no hidden defaults for admin, swap, web, CLIs, or sudo
+- guided dry-run input and summary output
+- CLI input in space-separated, comma-separated, mixed, `all`, and `none`
+  forms, including blank, malformed, mixed-token, range, duplicate, and
+  canonical-order cases
+- detection and fingerprinting of a valid SSH public key
+- checkout-free installer download and execution
+- generated server-script syntax and security-control order
+- swap symlink refusal
+- SSH validation before public SSH removal
+- generated cleanup paths for old helpers, sudoers, timers, updates, links, and SSH files
+- generated SSH rollback steps for migration validation failures
+- explicit `none` and missing CLI-selection state are distinguished
+- selected-only installer dispatch executes all eight CLI branches and checks
+  vendor commands and exact user-scoped binary paths
+- GitHub CLI package setup rejects an unmanaged PATH binary, invalid key data,
+  mixed or extra repository settings, and package installs that are not limited
+  or pinned to the official source
+- failed CLI reruns keep the prior auth helper and update timer
+- Pi version and update commands use its private Node while system tools stay
+  ahead of other user-writable CLI directories; managed CLI commands run by full
+  path even when a system command has the same name
+- every supported Codex and Amp command path is exercised
+- Factory Droid alone installs `xdg-utils`
+- successful reruns remove deselected managed links and state while retaining
+  third-party binaries; unmanaged links remain untouched
+- forced prepare installer failure stops before hardening starts
+- no CLI update timer for `none` or GitHub CLI alone
+- legacy CLI-link migration requires an old `vps-bootstrap` ownership record
+- updater failures return a failure status
+- safe shell quoting in the generated phase prelude
 
-```bash
-make lint
-```
-
-`make lint` uses ShellCheck when it is installed. If ShellCheck is unavailable, it falls back to `bash -n` syntax checks.
-
-The scheduled OpenSSF Scorecard workflow pins `ossf/scorecard-action` to a concrete upstream release tag. If GitHub cannot resolve that tag, update it to the current upstream release instead of using a missing floating major tag.
-
-Because this repository is private, the Scorecard job also needs job-level read permissions for checks, issues, and pull requests. Without those reads, Scorecard can fail during commit or SAST discovery with `Resource not accessible by integration`.
-
-Do not add `github/codeql-action/upload-sarif` to the Scorecard workflow unless code scanning is enabled for the repository. Without code scanning, the Scorecard run can succeed and then fail during SARIF upload.
-
-To match CI locally on macOS:
-
-```bash
-brew install shellcheck shfmt
-npm install -g prettier@3.3.3
-```
-
-## Test Coverage
-
-The tests cover:
-
-- CLI argument parsing and defaults.
-- Initial SSH key selection with `--login-identity` and SSH agent/config fallback.
-- Opt-in developer CLI installation defaults.
-- Public/private key path handling.
-- SSH hardening snippet generation.
-- UFW and firewalld command generation.
-- Remote script support for apt, dnf, yum, Tailscale install, interactive `tailscale up`, and `sshd -t`.
-- Root and non-root prepare upload the generated script before terminal-attached
-  SSH runs it, so a forced terminal never carries script input.
-- Developer CLI install generation for Codex CLI, Grok CLI, and GitHub CLI.
-- Agent CLI helper generation for native auth commands plus Grok `XAI_API_KEY` status handling.
-- Agent CLI update timer generation for two-day Codex installer reruns and `grok update`.
-- OS update timer generation for two-week unattended apt/dnf/yum package updates.
-- Swap setup generation, size validation, idempotent existing-swap handling, and `/etc/fstab` persistence.
-- Dry-run phase ordering that verifies Tailnet login before hardening.
-- Read-only `doctor` output for local inputs, provider firewall reminders, VPS state checks, and exposed port observations.
-- Streamed remote config generation so public keys with spaces and empty optional values survive SSH execution.
-- Scoped sudo policy generation and the `--full-sudo` escape hatch.
-- Best-effort JSONL audit logging inserted into root-owned helper scripts.
-- Parsing the prepare phase Tailnet IP from remote output.
-- Safe SSH include placement when a distro image lacks `/etc/ssh/sshd_config.d` support in the main config.
-
-Tests must not connect to or mutate a real server. Use dry-run output, fixtures, and generated script inspection for local verification.
-
-When a generated helper is backed by a template in `lib/templates/`, tests should read that template directly instead of adding thin wrapper functions only for tests.
+These tests do not change host files or run `sshd` and systemd failure paths.
+Before release, run the guided installer and rename migration on disposable VPS
+hosts as described in [release-process.md](release-process.md).

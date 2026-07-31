@@ -1,8 +1,7 @@
 # Security Policy
 
-`vps-bootstrap` changes SSH, sudo, firewall, package update, and developer CLI
-state on fresh VPS hosts. Please report security issues privately first so users
-are not given unsafe operational guidance before a fix is available.
+`vpsbuddy` changes SSH, sudo, firewall, package update, and developer CLI state
+on fresh VPS hosts. Please report security issues privately first.
 
 ## Supported Versions
 
@@ -61,8 +60,5 @@ issue is already being actively exploited or is already public.
 
 ## Security Model
 
-Read:
-
 - [documentation/security-model.md](documentation/security-model.md)
-- [documentation/threat-model.md](documentation/threat-model.md)
 - [documentation/provider-firewall-checklist.md](documentation/provider-firewall-checklist.md)
