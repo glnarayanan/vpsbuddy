@@ -35,6 +35,8 @@ automatic OS updates, scoped or full passwordless sudo, and optional Tailscale
 SSH. Blank CLI input is rejected; use `all` or `none` when that is clearer.
 There is no default admin name or swap size. Active swap is left unchanged.
 
+User-scoped upstream CLI installers run as the chosen admin user. GitHub CLI and required OS packages are installed as root through the supported apt, dnf, or yum package manager. GitHub CLI is accepted only from its signed official repository.
+
 ## Safe Hardening Flow
 
 1. Prepare the user, key, packages, Tailscale, swap, helpers, and firewall while

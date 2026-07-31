@@ -54,6 +54,11 @@ Droid, and Claude Code. Enter numbers separated by spaces or commas. Blank input
 is rejected; `all` selects every CLI and `none` skips them. The prompt removes
 duplicates and shows the final selection before confirmation.
 
+User-scoped upstream CLI installers run as the chosen admin user. GitHub CLI and
+required OS packages are installed as root through the supported apt, dnf, or yum
+package manager. Bootstrap accepts GitHub CLI only when its signed official
+repository is configured.
+
 If a selected installer fails, prepare stops while public SSH stays open. Each
 rerun clears the managed CLI update timer and auth helper, then adds them again
 for the new selection only. Deselecting a CLI stops vpsbuddy management but does

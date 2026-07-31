@@ -79,9 +79,11 @@ before Tailnet verification.
 
 Codex, Grok, GitHub CLI, Pi, OpenCode, Amp, Factory Droid, and Claude Code are
 installed only when selected. Bootstrap does not ask for or store their tokens.
-Installers run as the chosen admin user, not root. GitHub CLI uses its signed
-apt or rpm repository; the other CLI install and update paths trust official
-mutable upstream endpoints. Authenticate after setup with `vpsbuddy-auth`.
+User-scoped upstream installers run as the chosen admin user, not root. GitHub
+CLI and required OS packages are installed as root through the supported apt,
+dnf, or yum package manager. GitHub CLI uses its signed apt or rpm repository;
+the other CLI install and update paths trust official mutable upstream
+endpoints. Authenticate after setup with `vpsbuddy-auth`.
 The helper runs auth flows only for selected CLIs, and `xdg-utils` is installed
 only when Factory Droid is selected.
 

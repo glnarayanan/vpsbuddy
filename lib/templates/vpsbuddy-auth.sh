@@ -38,6 +38,16 @@ have() {
   command -v "$1" > /dev/null 2>&1
 }
 
+gh_command() {
+  if [[ -x /usr/bin/gh ]]; then
+    printf '/usr/bin/gh\n'
+    return 0
+  fi
+
+  printf 'GitHub CLI package is not installed at /usr/bin/gh\n' >&2
+  return 1
+}
+
 status_codex() {
   require_selected codex || return 1
   have codex && codex login status
@@ -82,8 +92,10 @@ status_grok() {
 }
 
 status_github() {
+  local gh_bin
   require_selected github || return 1
-  have gh && gh auth status --hostname github.com
+  gh_bin="$(gh_command)" || return 1
+  "$gh_bin" auth status --hostname github.com
 }
 
 auth_codex() {
@@ -114,13 +126,10 @@ auth_grok() {
 }
 
 auth_github() {
+  local gh_bin
   require_selected github || return 1
-  if ! have gh; then
-    printf 'gh is not installed\n' >&2
-    return 1
-  fi
-
-  gh auth login --hostname github.com --git-protocol ssh
+  gh_bin="$(gh_command)" || return 1
+  "$gh_bin" auth login --hostname github.com --git-protocol ssh
 }
 
 auth_pi() {

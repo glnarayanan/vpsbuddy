@@ -11,6 +11,7 @@ reset_config() {
   VPS_SWAP_ACTION=""
   VPS_WEB=""
   VPS_SELECTED_CLIS=""
+  VPS_SELECTED_CLIS_PRESENT=""
   VPS_AUTOMATIC_UPDATES=""
   VPS_FULL_SUDO=""
   VPS_ENABLE_TAILSCALE_SSH=""
@@ -443,6 +444,7 @@ collect_configuration() {
   collect_swap_configuration || return 1
   VPS_WEB="$(prompt_yes_no "Open public web ports 80 and 443")" || return 1
   VPS_SELECTED_CLIS="$(prompt_selected_clis)" || return 1
+  VPS_SELECTED_CLIS_PRESENT="1"
   VPS_AUTOMATIC_UPDATES="$(prompt_yes_no "Manage automatic OS updates with vpsbuddy")" || return 1
   VPS_FULL_SUDO="$(prompt_yes_no "Grant the admin user full passwordless sudo")" || return 1
   VPS_ENABLE_TAILSCALE_SSH="$(
@@ -489,6 +491,11 @@ set -Eeuo pipefail
 requested_hostname="${requested_hostname:-}"
 : "${enable_tailscale_ssh:?Tailscale SSH choice required}"
 : "${web_enabled:?web port choice required}"
+selected_clis_present="${selected_clis_present-}"
+selected_clis_value_present=0
+if [[ ${selected_clis+x} == x ]]; then
+  selected_clis_value_present=1
+fi
 selected_clis="${selected_clis-}"
 : "${automatic_updates:?automatic update choice required}"
 : "${full_sudo:?sudo policy choice required}"
@@ -507,6 +514,10 @@ TAILSCALE_IP=""
 cli_link_dir="/usr/local/bin"
 cli_link_manifest="/var/lib/vpsbuddy/cli-links"
 legacy_sudoers_dir="/etc/sudoers.d"
+github_cli_binary="/usr/bin/gh"
+github_cli_apt_keyring="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+github_cli_apt_repo="/etc/apt/sources.list.d/github-cli.list"
+github_cli_rpm_repo="/etc/yum.repos.d/gh-cli.repo"
 
 log() {
   printf '[vpsbuddy] %s\n' "$*"
@@ -533,6 +544,13 @@ selected_cli() {
 
 validate_selected_clis_server() {
   local cli_id previous="" previous_id
+
+  if [[ "$selected_clis_present" != "1" ]]; then
+    fail "developer CLI selection state is missing"
+  fi
+  if [[ "$selected_clis_value_present" != "1" ]]; then
+    fail "developer CLI selection value is missing"
+  fi
 
   for cli_id in $selected_clis; do
     case "$cli_id" in
@@ -1202,7 +1220,7 @@ run_as_admin() {
 
   sudo -H -u "$admin_user" env -i \
     HOME="$home_dir" \
-    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.local/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/share/pi-node/current/bin:$home_dir/bin" \
+    PATH="$home_dir/.local/share/pi-node/current/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin:/usr/bin:/usr/local/bin:/usr/sbin:/usr/local/sbin:/sbin:/bin" \
     SHELL=/bin/bash \
     bash --noprofile --norc -c "set -o pipefail; $command"
 }
@@ -1240,7 +1258,7 @@ admin_command_path() {
       candidate="$home_dir/.local/bin/$command_name"
       ;;
     github)
-      candidate="/usr/bin/gh"
+      candidate="$github_cli_binary"
       ;;
   esac
 
@@ -1250,10 +1268,9 @@ admin_command_path() {
   fi
 
   if [[ "$command_name" == "github" ]]; then
-    discovered_path="$(run_as_admin "$home_dir" 'command -v gh' 2>/dev/null || true)"
-  else
-    discovered_path="$(run_as_admin "$home_dir" "command -v $(printf '%q' "$command_name")" 2>/dev/null || true)"
+    return 1
   fi
+  discovered_path="$(run_as_admin "$home_dir" "command -v $(printf '%q' "$command_name")" 2>/dev/null || true)"
   [[ "$discovered_path" == "$cli_link_dir/$command_name" ]] && return 1
   printf '%s\n' "$discovered_path"
 }
@@ -1314,8 +1331,7 @@ link_admin_command() {
       return 1
     fi
     existing_target="$(readlink "$link_path")"
-    if [[ "$existing_target" != "$command_path" ]] &&
-      ! cli_link_manifest_contains "$command_name" "$existing_target"; then
+    if ! cli_link_manifest_contains "$command_name" "$existing_target"; then
       warn "refusing to replace unmanaged CLI link: $link_path"
       return 1
     fi
@@ -1518,50 +1534,124 @@ install_claude_cli() {
   fi
 }
 
-install_github_cli() {
-  if command_exists gh; then
-    log "GitHub CLI is already installed"
-    return 0
+github_cli_path_is_supported() {
+  [[ "$github_cli_binary" == */usr/bin/gh ]]
+}
+
+github_cli_apt_repository_configured() {
+  [[ -s "$github_cli_apt_keyring" && -f "$github_cli_apt_repo" ]] || return 1
+  grep -Eq '^[[:space:]]*deb .*https://cli\.github\.com/packages([[:space:]/]|$)' "$github_cli_apt_repo" || return 1
+  grep -Fq "signed-by=$github_cli_apt_keyring" "$github_cli_apt_repo"
+}
+
+github_cli_rpm_repository_configured() {
+  [[ -s "$github_cli_rpm_repo" ]] || return 1
+  grep -Eq '^[[:space:]]*(baseurl|mirrorlist)=https://cli\.github\.com/packages(/rpm)?([[:space:]]|$)' "$github_cli_rpm_repo" || return 1
+  grep -Eq '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*1([[:space:]]|$)' "$github_cli_rpm_repo" || return 1
+  grep -Eq '^[[:space:]]*gpgcheck[[:space:]]*=[[:space:]]*1([[:space:]]|$)' "$github_cli_rpm_repo" || return 1
+  grep -Eq '^[[:space:]]*gpgkey=https://cli\.github\.com/packages/.*(gpg|keyring)' "$github_cli_rpm_repo"
+}
+
+github_cli_package_owns_binary() {
+  local owner
+
+  case "$PKG_BACKEND" in
+    apt)
+      command_exists dpkg-query || return 1
+      [[ "$(dpkg-query -W -f='${Status}' gh 2>/dev/null || true)" == "install ok installed" ]] || return 1
+      owner="$(dpkg-query -S "$github_cli_binary" 2>/dev/null || true)"
+      [[ "$owner" == gh:* ]]
+      ;;
+    dnf | yum)
+      command_exists rpm || return 1
+      rpm -q gh >/dev/null 2>&1 || return 1
+      owner="$(rpm -qf "$github_cli_binary" 2>/dev/null || true)"
+      [[ "$owner" == gh || "$owner" == gh-* ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+github_cli_package_is_managed() {
+  github_cli_path_is_supported || return 1
+  [[ -x "$github_cli_binary" ]] || return 1
+
+  case "$PKG_BACKEND" in
+    apt)
+      github_cli_apt_repository_configured || return 1
+      ;;
+    dnf | yum)
+      github_cli_rpm_repository_configured || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  github_cli_package_owns_binary
+}
+
+configure_github_cli_apt_repository() {
+  export DEBIAN_FRONTEND=noninteractive
+  install -d -m 0755 "$(dirname "$github_cli_apt_keyring")"
+  if ! curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$github_cli_apt_keyring"; then
+    warn "GitHub CLI repository key download failed"
+    return 1
   fi
+  chmod go+r "$github_cli_apt_keyring"
+  install -d -m 0755 "$(dirname "$github_cli_apt_repo")"
+  printf 'deb [arch=%s signed-by=%s] https://cli.github.com/packages stable main\n' \
+    "$(dpkg --print-architecture)" \
+    "$github_cli_apt_keyring" \
+    >"$github_cli_apt_repo"
+}
 
-  log "installing GitHub CLI"
-
-  if [[ "$PKG_BACKEND" == "apt" ]]; then
-    install -d -m 0755 /etc/apt/keyrings
-    if ! curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; then
-      warn "GitHub CLI repository key download failed"
-      return 1
-    fi
-    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
-    install -d -m 0755 /etc/apt/sources.list.d
-    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
-      "$(dpkg --print-architecture)" \
-      >/etc/apt/sources.list.d/github-cli.list
-    if ! apt-get update; then
-      warn "GitHub CLI package index update failed"
-      return 1
-    fi
-    if ! apt-get install -y gh; then
-      warn "GitHub CLI package install failed"
-      return 1
-    fi
-    if ! gh --version >/dev/null; then
-      warn "GitHub CLI version check failed"
-      return 1
-    fi
-    return 0
-  fi
-
-  if ! curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo -o /etc/yum.repos.d/gh-cli.repo; then
+configure_github_cli_rpm_repository() {
+  install -d -m 0755 "$(dirname "$github_cli_rpm_repo")"
+  if ! curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo -o "$github_cli_rpm_repo"; then
     warn "GitHub CLI repository download failed"
     return 1
   fi
-  if ! "$PKG_BIN" install -y gh; then
-    warn "GitHub CLI package install failed"
+}
+
+install_github_cli() {
+  if github_cli_package_is_managed && "$github_cli_binary" --version >/dev/null 2>&1; then
+    log "GitHub CLI is already installed from the configured signed package repository"
+    return 0
+  fi
+
+  log "installing or repairing GitHub CLI from its signed package repository"
+  case "$PKG_BACKEND" in
+    apt)
+      configure_github_cli_apt_repository || return 1
+      if ! apt-get update; then
+        warn "GitHub CLI package index update failed"
+        return 1
+      fi
+      if ! apt-get install -y gh; then
+        warn "GitHub CLI package install failed"
+        return 1
+      fi
+      ;;
+    dnf | yum)
+      configure_github_cli_rpm_repository || return 1
+      if ! "$PKG_BIN" install -y gh; then
+        warn "GitHub CLI package install failed"
+        return 1
+      fi
+      ;;
+    *)
+      fail "cannot install GitHub CLI on unsupported package backend: $PKG_BACKEND"
+      ;;
+  esac
+
+  if ! github_cli_package_is_managed; then
+    warn "GitHub CLI is not installed from the configured signed package repository"
     return 1
   fi
-  if ! gh --version >/dev/null; then
+  if ! "$github_cli_binary" --version >/dev/null; then
     warn "GitHub CLI version check failed"
     return 1
   fi
@@ -1750,7 +1840,7 @@ AGENT_CLI_UPDATE_HEAD
 run_as_admin() {
   sudo -H -u "$admin_user" env -i \
     HOME="$home_dir" \
-    PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.local/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/share/pi-node/current/bin:$home_dir/bin" \
+    PATH="$home_dir/.local/share/pi-node/current/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin:/usr/bin:/usr/local/bin:/usr/sbin:/usr/local/sbin:/sbin:/bin" \
     SHELL=/bin/bash \
     bash --noprofile --norc -c "set -o pipefail; $1"
 }
@@ -1847,8 +1937,7 @@ link_admin_command() {
       return 1
     fi
     existing_target="$(readlink "$link_path")"
-    if [[ "$existing_target" != "$command_path" ]] &&
-      ! cli_link_manifest_contains "$command_name" "$existing_target"; then
+    if ! cli_link_manifest_contains "$command_name" "$existing_target"; then
       printf '[vpsbuddy] warning: refusing to replace unmanaged CLI link: %s\n' "$link_path" >&2
       return 1
     fi
@@ -1996,7 +2085,7 @@ print_selected_cli_versions() {
     case "$cli_id" in
       codex) command_name=codex; output_key=CODEX ;;
       grok) command_name=grok; output_key=GROK ;;
-      github) command_name=gh; output_key=GH ;;
+      github) command_name=/usr/bin/gh; output_key=GH ;;
       pi) command_name=pi; output_key=PI ;;
       opencode) command_name=opencode; output_key=OPENCODE ;;
       amp) command_name=amp; output_key=AMP ;;
@@ -2358,6 +2447,7 @@ generate_server_config_prelude() {
   printf 'requested_hostname=%q\n' "$VPS_HOSTNAME"
   printf 'enable_tailscale_ssh=%q\n' "$VPS_ENABLE_TAILSCALE_SSH"
   printf 'web_enabled=%q\n' "$VPS_WEB"
+  printf 'selected_clis_present=%q\n' "$VPS_SELECTED_CLIS_PRESENT"
   printf 'selected_clis=%q\n' "$VPS_SELECTED_CLIS"
   printf 'automatic_updates=%q\n' "$VPS_AUTOMATIC_UPDATES"
   printf 'full_sudo=%q\n' "$VPS_FULL_SUDO"

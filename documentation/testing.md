@@ -22,15 +22,19 @@ installed. CI runs the same command in its formatter job.
 - SSH validation before public SSH removal
 - generated cleanup paths for old helpers, sudoers, timers, updates, links, and SSH files
 - generated SSH rollback steps for migration validation failures
-- selected-only installer, version, updater, and auth-helper behavior
+- explicit `none` and missing CLI-selection state are distinguished
+- selected-only installer dispatch executes all eight CLI branches and checks
+  vendor commands and exact user-scoped binary paths
+- GitHub CLI package verification rejects an unmanaged PATH binary and accepts a
+  package-owned binary only with the signed repository configured
+- Pi version and update commands use its private Node before system paths
+- Factory Droid alone installs `xdg-utils`
+- successful reruns remove deselected managed links and state while retaining
+  third-party binaries; unmanaged links remain untouched
+- forced prepare installer failure stops before hardening starts
 - no CLI update timer for `none` or GitHub CLI alone
-- CLI deselection removes vpsbuddy-managed timer and auth state without
-  uninstalling third-party binaries
 - legacy CLI-link migration requires an old `vps-bootstrap` ownership record
-- unmanaged CLI links are not replaced and updater failures return a failure
-  status
-- exact per-user binary paths and selected-only Factory Droid `xdg-utils`
-- developer CLI failure or opt-out clears the update timer
+- updater failures return a failure status
 - safe shell quoting in the generated phase prelude
 
 These tests do not change host files or run `sshd` and systemd failure paths.

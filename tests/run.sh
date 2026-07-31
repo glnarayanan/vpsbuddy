@@ -144,6 +144,7 @@ test_generated_selected_cli_behavior() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -166,6 +167,7 @@ test_generated_selected_cli_behavior() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=github
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -188,6 +190,7 @@ test_generated_selected_cli_behavior() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis="codex github"
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -201,6 +204,57 @@ test_generated_selected_cli_behavior() {
     pass "selected CLI membership is exact in generated code"
   else
     fail "selected CLI membership is exact in generated code"
+  fi
+
+  rm -f "$server_fixture"
+}
+
+test_generated_missing_cli_selection_state() {
+  local server_script server_fixture
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    validate_selected_clis_server
+  ' bash "$server_fixture"; then
+    fail "missing CLI selection marker is rejected"
+  else
+    pass "missing CLI selection marker is rejected"
+  fi
+
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    validate_selected_clis_server
+  ' bash "$server_fixture"; then
+    fail "missing CLI selection value is rejected"
+  else
+    pass "missing CLI selection value is rejected"
   fi
 
   rm -f "$server_fixture"
@@ -227,6 +281,7 @@ test_generated_installer_failure_is_not_masked() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=grok
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -277,6 +332,7 @@ test_generated_cli_link_cleanup() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -291,6 +347,42 @@ test_generated_cli_link_cleanup() {
   else
     fail "deselected CLI link is removed without uninstalling its binary"
   fi
+
+  unmanaged_target="$link_dir/unmanaged-home/.grok/bin/grok"
+  mkdir -p "$(dirname "$unmanaged_target")" "$link_dir/no-legacy"
+  printf '#!/usr/bin/env bash\n' > "$unmanaged_target"
+  chmod 755 "$unmanaged_target"
+  ln -s "$unmanaged_target" "$link_dir/grok"
+
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    cli_link_dir="$2"
+    cli_link_manifest="$3"
+    legacy_sudoers_dir="$4"
+    remove_deselected_cli_links
+    [[ -L "$cli_link_dir/grok" ]]
+    [[ "$(readlink "$cli_link_dir/grok")" == "$5" ]]
+    [[ ! -e "$cli_link_manifest" ]]
+  ' bash "$server_fixture" "$link_dir" "$manifest" "$link_dir/no-legacy" "$unmanaged_target"; then
+    pass "deselection leaves an unmanaged CLI link untouched"
+  else
+    fail "deselection leaves an unmanaged CLI link untouched"
+  fi
+
+  rm -f "$link_dir/grok"
 
   legacy_sudoers_dir="$link_dir/legacy-sudoers"
   legacy_home="$link_dir/legacy-home"
@@ -308,6 +400,7 @@ test_generated_cli_link_cleanup() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -354,6 +447,7 @@ test_generated_cli_link_safety() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -372,7 +466,7 @@ test_generated_cli_link_safety() {
   fi
 
   rm -f "$link_dir/grok"
-  ln -s "$link_dir/grok" "$link_dir/grok"
+  ln -s "$home_dir/.grok/bin/grok" "$link_dir/grok"
   if bash -c '
     set -Eeuo pipefail
     phase=prepare
@@ -382,6 +476,39 @@ test_generated_cli_link_safety() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    cli_link_dir="$2"
+    cli_link_manifest="$2/manifest"
+    if link_admin_command "$3" grok; then
+      exit 1
+    fi
+    [[ -L "$cli_link_dir/grok" ]]
+    [[ "$(readlink "$cli_link_dir/grok")" == "$3/.grok/bin/grok" ]]
+    [[ ! -e "$cli_link_manifest" ]]
+  ' bash "$server_fixture" "$link_dir" "$home_dir" 2> /dev/null; then
+    pass "CLI link rejects an unmanaged link to the expected binary"
+  else
+    fail "CLI link rejects an unmanaged link to the expected binary"
+  fi
+
+  rm -f "$link_dir/grok"
+  ln -s "$link_dir/grok" "$link_dir/self-grok"
+  mv "$link_dir/self-grok" "$link_dir/grok"
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -411,6 +538,7 @@ test_generated_cli_link_safety() {
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -430,6 +558,622 @@ test_generated_cli_link_safety() {
   fi
 
   rm -rf "$server_fixture" "$link_dir" "$home_dir"
+}
+
+test_successful_rerun_deselects_managed_cli() {
+  local server_script server_fixture home_dir link_dir
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  home_dir="$(mktemp -d /tmp/vpsbuddy-rerun-home.XXXXXX)"
+  link_dir="$(mktemp -d /tmp/vpsbuddy-rerun-links.XXXXXX)"
+  mkdir -p "$home_dir/.grok/bin"
+  printf '#!/usr/bin/env bash\n' > "$home_dir/.grok/bin/grok"
+  chmod 755 "$home_dir/.grok/bin/grok"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=grok
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    cli_link_dir="$2"
+    cli_link_manifest="$2/manifest"
+    home_dir="$3"
+    timer_marker="$2/timer"
+    auth_marker="$2/auth"
+    admin_home_dir() {
+      printf "%s\n" "$home_dir"
+    }
+    install_grok_cli() {
+      link_admin_command "$home_dir" grok
+    }
+    remove_agent_cli_update_timer() {
+      rm -f "$timer_marker"
+    }
+    remove_agent_auth_helper() {
+      rm -f "$auth_marker"
+    }
+    install_agent_auth_helper() {
+      : >"$auth_marker"
+    }
+    install_agent_cli_update_timer() {
+      : >"$timer_marker"
+    }
+    print_selected_cli_versions() {
+      :
+    }
+    install_selected_clis
+    [[ -L "$cli_link_dir/grok" ]]
+    [[ -s "$cli_link_manifest" ]]
+    [[ -e "$timer_marker" && -e "$auth_marker" ]]
+
+    selected_clis=
+    install_selected_clis
+    [[ ! -e "$cli_link_manifest" ]]
+    [[ ! -L "$cli_link_dir/grok" ]]
+    [[ -x "$home_dir/.grok/bin/grok" ]]
+    [[ ! -e "$timer_marker" && ! -e "$auth_marker" ]]
+  ' bash "$server_fixture" "$link_dir" "$home_dir"; then
+    pass "successful rerun removes deselected managed CLI state"
+  else
+    fail "successful rerun removes deselected managed CLI state"
+  fi
+
+  rm -rf "$server_fixture" "$home_dir" "$link_dir"
+}
+
+test_github_cli_requires_managed_package() {
+  local server_script server_fixture root_dir bin_dir record state gh_path
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  root_dir="$(mktemp -d /tmp/vpsbuddy-gh-root.XXXXXX)"
+  bin_dir="$(mktemp -d /tmp/vpsbuddy-gh-bin.XXXXXX)"
+  record="$(mktemp /tmp/vpsbuddy-gh-record.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+  state="$root_dir/package-installed"
+  gh_path="$root_dir/usr/bin/gh"
+  mkdir -p "$(dirname "$gh_path")" "$root_dir/etc/apt/keyrings" "$root_dir/etc/apt/sources.list.d"
+  printf 'signed-key\n' > "$root_dir/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+  printf 'deb [arch=amd64 signed-by=%s] https://cli.github.com/packages stable main\n' \
+    "$root_dir/etc/apt/keyrings/githubcli-archive-keyring.gpg" \
+    > "$root_dir/etc/apt/sources.list.d/github-cli.list"
+  printf '#!/usr/bin/env bash\nprintf "gh-package\\n"\n' > "$gh_path"
+  chmod 755 "$gh_path"
+  touch "$state"
+
+  cat > "$bin_dir/dpkg-query" << 'DPKG_QUERY'
+#!/usr/bin/env bash
+if [[ ! -f "$VPSBUDDY_TEST_GH_STATE" ]]; then
+  exit 1
+fi
+case "$1" in
+  -W)
+    printf 'install ok installed\n'
+    ;;
+  -S)
+    printf 'gh: %s\n' "$2"
+    ;;
+esac
+DPKG_QUERY
+  cat > "$bin_dir/dpkg" << 'DPKG'
+#!/usr/bin/env bash
+printf 'amd64\n'
+DPKG
+  cat > "$bin_dir/apt-get" << 'APT_GET'
+#!/usr/bin/env bash
+printf 'apt-get %s\n' "$*" >>"$VPSBUDDY_TEST_RECORD"
+if [[ "$*" == *"install -y gh"* ]]; then
+  touch "$VPSBUDDY_TEST_GH_STATE"
+  mkdir -p "$(dirname "$VPSBUDDY_TEST_GH_BINARY")"
+  printf '#!/usr/bin/env bash\nprintf "gh-package\\n"\n' >"$VPSBUDDY_TEST_GH_BINARY"
+  chmod 755 "$VPSBUDDY_TEST_GH_BINARY"
+fi
+APT_GET
+  cat > "$bin_dir/curl" << 'CURL'
+#!/usr/bin/env bash
+output=""
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "-o" ]]; then
+    output="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+printf 'curl\n' >>"$VPSBUDDY_TEST_RECORD"
+printf 'signed-key\n' >"$output"
+CURL
+  chmod 755 "$bin_dir/dpkg-query" "$bin_dir/dpkg" "$bin_dir/apt-get" "$bin_dir/curl"
+
+  if PATH="$bin_dir:$root_dir/path-bin:$PATH" \
+    VPSBUDDY_TEST_RECORD="$record" \
+    VPSBUDDY_TEST_GH_STATE="$state" \
+    VPSBUDDY_TEST_GH_BINARY="$gh_path" \
+    bash -c '
+      set -Eeuo pipefail
+      phase=prepare
+      admin_user=deploy
+      public_key=ssh-ed25519
+      requested_hostname=
+      enable_tailscale_ssh=0
+      web_enabled=1
+      selected_clis=github
+      selected_clis_present=1
+      automatic_updates=0
+      full_sudo=0
+      swap_enabled=0
+      swap_size=
+      source "$1"
+      PKG_BACKEND=apt
+      PKG_BIN=apt-get
+      github_cli_binary="$2/usr/bin/gh"
+      github_cli_apt_keyring="$2/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+      github_cli_apt_repo="$2/etc/apt/sources.list.d/github-cli.list"
+      github_cli_rpm_repo="$2/etc/yum.repos.d/gh-cli.repo"
+      install_github_cli
+      [[ ! -s "$VPSBUDDY_TEST_RECORD" ]]
+      printf "%s\n" "#!/usr/bin/env bash" "exit 1" >"$github_cli_binary"
+      install_github_cli
+      grep -Fq "apt-get install -y gh" "$VPSBUDDY_TEST_RECORD"
+      : >"$VPSBUDDY_TEST_RECORD"
+      rm -f "$VPSBUDDY_TEST_GH_STATE" "$github_cli_binary" "$github_cli_apt_keyring" "$github_cli_apt_repo"
+      mkdir -p "$2/path-bin"
+      printf "%s\n" "#!/usr/bin/env bash" >"$2/path-bin/gh"
+      chmod 755 "$2/path-bin/gh"
+      if ! command -v gh | grep -Fq "$2/path-bin/gh"; then
+        exit 1
+      fi
+      if admin_command_path "$2" github; then
+        exit 1
+      fi
+      install_github_cli
+      [[ "$(admin_command_path "$2" github)" == "$github_cli_binary" ]]
+      grep -Fq "curl" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "apt-get update" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "apt-get install -y gh" "$VPSBUDDY_TEST_RECORD"
+      github_cli_package_is_managed
+    ' bash "$server_fixture" "$root_dir"; then
+    pass "GitHub CLI uses the signed package path instead of PATH"
+  else
+    fail "GitHub CLI uses the signed package path instead of PATH"
+  fi
+
+  rm -rf "$server_fixture" "$root_dir" "$bin_dir" "$record"
+}
+
+test_github_cli_rpm_package_path() {
+  local server_script server_fixture root_dir bin_dir record state gh_path
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  root_dir="$(mktemp -d /tmp/vpsbuddy-gh-rpm-root.XXXXXX)"
+  bin_dir="$(mktemp -d /tmp/vpsbuddy-gh-rpm-bin.XXXXXX)"
+  record="$(mktemp /tmp/vpsbuddy-gh-rpm-record.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  state="$root_dir/package-installed"
+  gh_path="$root_dir/usr/bin/gh"
+  mkdir -p "$(dirname "$gh_path")" "$root_dir/etc/yum.repos.d"
+  cat > "$root_dir/etc/yum.repos.d/gh-cli.repo" << 'REPO'
+[gh-cli]
+name=packages for the GitHub CLI
+baseurl=https://cli.github.com/packages/rpm
+enabled=1
+gpgcheck=1
+gpgkey=https://cli.github.com/packages/githubcli-archive-keyring.asc
+REPO
+  cp "$root_dir/etc/yum.repos.d/gh-cli.repo" "$root_dir/rpm-source.repo"
+  printf '#!/usr/bin/env bash\nprintf "gh-rpm\\n"\n' > "$gh_path"
+  chmod 755 "$gh_path"
+  touch "$state"
+
+  cat > "$bin_dir/rpm" << 'RPM'
+#!/usr/bin/env bash
+case "$1" in
+  -q)
+    [[ "$2" == gh && -f "$VPSBUDDY_TEST_RPM_STATE" ]]
+    ;;
+  -qf)
+    [[ -f "$VPSBUDDY_TEST_RPM_STATE" ]] || exit 1
+    printf 'gh-2.0-1.x86_64\n'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+RPM
+  cat > "$bin_dir/dnf" << 'DNF'
+#!/usr/bin/env bash
+printf 'dnf %s\n' "$*" >>"$VPSBUDDY_TEST_RECORD"
+if [[ "$*" == "install -y gh" ]]; then
+  touch "$VPSBUDDY_TEST_RPM_STATE"
+  mkdir -p "$(dirname "$VPSBUDDY_TEST_RPM_BINARY")"
+  printf '#!/usr/bin/env bash\nprintf "gh-rpm\\n"\n' >"$VPSBUDDY_TEST_RPM_BINARY"
+  chmod 755 "$VPSBUDDY_TEST_RPM_BINARY"
+fi
+DNF
+  cat > "$bin_dir/curl" << 'CURL'
+#!/usr/bin/env bash
+output=""
+while [[ "$#" -gt 0 ]]; do
+  if [[ "$1" == "-o" ]]; then
+    output="$2"
+    shift 2
+  else
+    shift
+  fi
+done
+printf 'curl\n' >>"$VPSBUDDY_TEST_RECORD"
+cat "$VPSBUDDY_TEST_RPM_SOURCE" >"$output"
+CURL
+  chmod 755 "$bin_dir/rpm" "$bin_dir/dnf" "$bin_dir/curl"
+
+  if PATH="$bin_dir:$PATH" \
+    VPSBUDDY_TEST_RECORD="$record" \
+    VPSBUDDY_TEST_RPM_STATE="$state" \
+    VPSBUDDY_TEST_RPM_BINARY="$gh_path" \
+    VPSBUDDY_TEST_RPM_SOURCE="$root_dir/rpm-source.repo" \
+    bash -c '
+      set -Eeuo pipefail
+      phase=prepare
+      admin_user=deploy
+      public_key=ssh-ed25519
+      requested_hostname=
+      enable_tailscale_ssh=0
+      web_enabled=1
+      selected_clis=github
+      selected_clis_present=1
+      automatic_updates=0
+      full_sudo=0
+      swap_enabled=0
+      swap_size=
+      source "$1"
+      PKG_BACKEND=dnf
+      PKG_BIN=dnf
+      github_cli_binary="$2/usr/bin/gh"
+      github_cli_rpm_repo="$2/etc/yum.repos.d/gh-cli.repo"
+      github_cli_apt_keyring="$2/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+      github_cli_apt_repo="$2/etc/apt/sources.list.d/github-cli.list"
+      install_github_cli
+      [[ ! -s "$VPSBUDDY_TEST_RECORD" ]]
+
+      printf "%s\n" "#!/usr/bin/env bash" "exit 1" >"$github_cli_binary"
+      install_github_cli
+      grep -Fq "dnf install -y gh" "$VPSBUDDY_TEST_RECORD"
+      : >"$VPSBUDDY_TEST_RECORD"
+
+      rm -f "$VPSBUDDY_TEST_RPM_STATE" "$github_cli_binary" "$github_cli_rpm_repo"
+      mkdir -p "$2/path-bin"
+      printf "%s\n" "#!/usr/bin/env bash" >"$2/path-bin/gh"
+      chmod 755 "$2/path-bin/gh"
+      if admin_command_path "$2" github; then
+        exit 1
+      fi
+      install_github_cli
+      [[ "$(admin_command_path "$2" github)" == "$github_cli_binary" ]]
+      grep -Fq "curl" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "dnf install -y gh" "$VPSBUDDY_TEST_RECORD"
+      github_cli_package_is_managed
+    ' bash "$server_fixture" "$root_dir"; then
+    pass "GitHub CLI uses the signed RPM package path"
+  else
+    fail "GitHub CLI uses the signed RPM package path"
+  fi
+
+  rm -rf "$server_fixture" "$root_dir" "$bin_dir" "$record"
+}
+test_selected_cli_install_dispatch() {
+  local server_script server_fixture home_dir link_dir bin_dir record output expected
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  home_dir="$(mktemp -d /tmp/vpsbuddy-cli-dispatch-home.XXXXXX)"
+  link_dir="$(mktemp -d /tmp/vpsbuddy-cli-dispatch-links.XXXXXX)"
+  record="$(mktemp /tmp/vpsbuddy-cli-dispatch-record.XXXXXX)"
+  # installer fixture
+  bin_dir="$(mktemp -d /tmp/vpsbuddy-cli-dispatch-bin.XXXXXX)"
+  cat > "$bin_dir/curl" << 'FAKE_CURL'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"$VPSBUDDY_TEST_RECORD"
+case "$*" in
+  *chatgpt.com/codex/install.sh*) target="$HOME/.codex/bin/codex" ;;
+  *x.ai/cli/install.sh*) target="$HOME/.grok/bin/grok" ;;
+  *pi.dev/install.sh*) target="$HOME/.local/bin/pi" ;;
+  *opencode.ai/install*) target="$HOME/.opencode/bin/opencode" ;;
+  *ampcode.com/install.sh*) target="$HOME/.amp/bin/amp" ;;
+  *app.factory.ai/cli*) target="$HOME/.local/bin/droid" ;;
+  *claude.ai/install.sh*) target="$HOME/.local/bin/claude" ;;
+  *) exit 1 ;;
+esac
+printf 'mkdir -p "%s"\nprintf "exit 0\\n" >"%s"\nchmod 755 "%s"\n' \
+  "$(dirname "$target")" "$target" "$target"
+FAKE_CURL
+  chmod 755 "$bin_dir/curl"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  if VPSBUDDY_TEST_RECORD="$record" bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis="codex grok github pi opencode amp droid claude"
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    test_home="$3"
+    test_bin="$4"
+    cli_link_dir="$2/bin"
+    cli_link_manifest="$2/manifest"
+    admin_home_dir() {
+      printf "%s\n" "$test_home"
+    }
+    run_as_admin() {
+      local home_dir="$1"
+      local command="$2"
+      local admin_path
+      admin_path="$test_bin:$home_dir/.local/share/pi-node/current/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin:/usr/bin:/bin"
+      printf "%s\n" "$command" >>"$VPSBUDDY_TEST_RECORD"
+      HOME="$home_dir" PATH="$admin_path" /bin/bash --noprofile --norc -c "set -o pipefail; $command"
+    }
+    install_github_cli() {
+      printf "github-package-manager\n" >>"$VPSBUDDY_TEST_RECORD"
+    }
+    install_droid_package() {
+      printf "xdg-utils\n" >>"$VPSBUDDY_TEST_RECORD"
+    }
+    remove_agent_cli_update_timer() {
+      :
+    }
+    remove_agent_auth_helper() {
+      :
+    }
+    remove_deselected_cli_links() {
+      :
+    }
+    install_agent_auth_helper() {
+      :
+    }
+    install_agent_cli_update_timer() {
+      :
+    }
+    has_cli_updates() {
+      return 1
+    }
+    print_selected_cli_versions() {
+      :
+    }
+    install_selected_clis
+  ' bash "$server_fixture" "$link_dir" "$home_dir" "$bin_dir"; then
+    output="$(cat "$record")"
+    for expected in \
+      "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh" \
+      "curl -fsSL https://x.ai/cli/install.sh | bash" \
+      "github-package-manager" \
+      "curl -fsSL https://pi.dev/install.sh | sh" \
+      "curl -fsSL https://opencode.ai/install | bash" \
+      "mkdir -p \"\$HOME/.local/bin\"" \
+      "curl -fsSL https://ampcode.com/install.sh | bash" \
+      "xdg-utils" \
+      "curl -fsSL https://app.factory.ai/cli | sh" \
+      "curl -fsSL https://claude.ai/install.sh | bash"; do
+      assert_contains "selected CLI dispatch runs $expected" "$output" "$expected"
+    done
+
+    for expected in \
+      "codex|$home_dir/.codex/bin/codex" \
+      "grok|$home_dir/.grok/bin/grok" \
+      "pi|$home_dir/.local/bin/pi" \
+      "opencode|$home_dir/.opencode/bin/opencode" \
+      "amp|$home_dir/.amp/bin/amp" \
+      "droid|$home_dir/.local/bin/droid" \
+      "claude|$home_dir/.local/bin/claude"; do
+      IFS='|' read -r cli_id cli_path <<< "$expected"
+      if [[ -x "$cli_path" ]] && [[ -L "$link_dir/bin/$cli_id" ]] &&
+        [[ "$(readlink "$link_dir/bin/$cli_id")" == "$cli_path" ]]; then
+        pass "selected CLI installer creates and links $cli_id at $cli_path"
+      else
+        fail "selected CLI installer creates and links $cli_id at $cli_path"
+      fi
+    done
+  else
+    fail "selected CLI installer dispatch runs all eight selections"
+  fi
+
+  rm -rf "$server_fixture" "$home_dir" "$link_dir" "$bin_dir" "$record"
+}
+
+test_droid_only_installs_xdg_utils() {
+  local server_script server_fixture home_dir link_dir bin_dir record output xdg_state
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  home_dir="$(mktemp -d /tmp/vpsbuddy-droid-home.XXXXXX)"
+  link_dir="$(mktemp -d /tmp/vpsbuddy-droid-links.XXXXXX)"
+  bin_dir="$(mktemp -d /tmp/vpsbuddy-droid-bin.XXXXXX)"
+  record="$(mktemp /tmp/vpsbuddy-droid-record.XXXXXX)"
+  xdg_state="$(mktemp /tmp/vpsbuddy-droid-xdg-state.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  cat > "$bin_dir/apt-get" << 'APT_GET'
+#!/usr/bin/env bash
+printf 'apt-get %s\n' "$*" >>"$VPSBUDDY_TEST_RECORD"
+[[ "$*" == "install -y xdg-utils" ]] || exit 1
+touch "$VPSBUDDY_TEST_XDG_STATE"
+APT_GET
+  cat > "$bin_dir/curl" << 'CURL'
+#!/usr/bin/env bash
+[[ "$*" == *"https://app.factory.ai/cli"* ]] || exit 1
+printf 'mkdir -p "%s"\nprintf "exit 0\\n" >"%s"\nchmod 755 "%s"\n' \
+  "$HOME/.local/bin" "$HOME/.local/bin/droid" "$HOME/.local/bin/droid"
+CURL
+  chmod 755 "$bin_dir/apt-get" "$bin_dir/curl"
+
+  if PATH="$bin_dir:$PATH" VPSBUDDY_TEST_RECORD="$record" VPSBUDDY_TEST_XDG_STATE="$xdg_state" bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=droid
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    PKG_BACKEND=apt
+    PKG_BIN=apt-get
+    test_home="$3"
+    test_bin="$4"
+    cli_link_dir="$2/bin"
+    cli_link_manifest="$2/manifest"
+    admin_home_dir() {
+      printf "%s\n" "$test_home"
+    }
+    run_as_admin() {
+      local home_dir="$1"
+      local command="$2"
+      local admin_path
+      admin_path="$test_bin:$home_dir/.local/share/pi-node/current/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin:/usr/bin:/bin"
+      printf "%s\n" "$command" >>"$VPSBUDDY_TEST_RECORD"
+      HOME="$home_dir" PATH="$admin_path" /bin/bash --noprofile --norc -c "set -o pipefail; $command"
+    }
+    remove_agent_cli_update_timer() {
+      :
+    }
+    remove_agent_auth_helper() {
+      :
+    }
+    remove_deselected_cli_links() {
+      :
+    }
+    install_agent_auth_helper() {
+      :
+    }
+    has_cli_updates() {
+      return 1
+    }
+    print_selected_cli_versions() {
+      :
+    }
+    install_selected_clis
+  ' bash "$server_fixture" "$link_dir" "$home_dir" "$bin_dir"; then
+    output="$(cat "$record")"
+    assert_contains "Droid-only selection installs xdg-utils" "$output" "apt-get install -y xdg-utils"
+    assert_contains "Droid-only selection runs the Factory installer" "$output" "curl -fsSL https://app.factory.ai/cli | sh"
+    assert_not_contains "Droid-only selection skips Pi installer" "$output" "pi.dev/install.sh"
+    [[ -f "$xdg_state" ]]
+    [[ -x "$home_dir/.local/bin/droid" ]]
+    [[ -L "$link_dir/bin/droid" ]]
+    [[ "$(readlink "$link_dir/bin/droid")" == "$home_dir/.local/bin/droid" ]]
+    pass "Droid-only selection executes xdg-utils and Factory setup"
+  else
+    fail "Droid-only selection executes xdg-utils and Factory setup"
+  fi
+
+  rm -rf "$server_fixture" "$home_dir" "$link_dir" "$bin_dir" "$record" "$xdg_state"
+}
+
+test_generated_pi_node_precedence() {
+  local server_script server_fixture home_dir system_bin bin_dir link_dir sbin_dir systemd_dir record
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  home_dir="$(mktemp -d /tmp/vpsbuddy-pi-home.XXXXXX)"
+  system_bin="$(mktemp -d /tmp/vpsbuddy-system-node.XXXXXX)"
+  bin_dir="$(mktemp -d /tmp/vpsbuddy-pi-bin.XXXXXX)"
+  link_dir="$(mktemp -d /tmp/vpsbuddy-pi-links.XXXXXX)"
+  sbin_dir="$(mktemp -d /tmp/vpsbuddy-pi-sbin.XXXXXX)"
+  systemd_dir="$(mktemp -d /tmp/vpsbuddy-pi-systemd.XXXXXX)"
+  record="$home_dir/pi-node-record"
+  mkdir -p "$home_dir/.local/share/pi-node/current/bin" "$home_dir/.local/bin"
+
+  printf '#!/bin/bash\nprintf "pi-private-node\n"\n' \
+    > "$home_dir/.local/share/pi-node/current/bin/node"
+  printf '#!/bin/bash\nprintf "system-node\n"\n' > "$system_bin/node"
+  chmod 755 "$home_dir/.local/share/pi-node/current/bin/node" "$system_bin/node"
+
+  cat > "$home_dir/.local/bin/pi" << 'PI'
+#!/bin/bash
+printf '%s %s\n' "$*" "$(node --version)" >>"$HOME/pi-node-record"
+PI
+  chmod 755 "$home_dir/.local/bin/pi"
+
+  cat > "$bin_dir/sudo" << 'FAKE_SUDO'
+#!/bin/bash
+if [[ "$1" == "-H" ]]; then
+  shift
+fi
+if [[ "$1" == "-u" ]]; then
+  shift 2
+fi
+exec "$@"
+FAKE_SUDO
+  chmod 755 "$bin_dir/sudo"
+
+  sed \
+    -e "s|:/usr/bin:/usr/local/bin:/usr/sbin:/usr/local/sbin:/sbin:/bin\"|:$system_bin:/usr/bin:/bin\"|g" \
+    -e "s|/usr/local/sbin|$sbin_dir|g" \
+    -e "s|/etc/systemd/system|$systemd_dir|g" \
+    -e '/^case "\$phase" in/,$d' \
+    < <(printf '%s\n' "$server_script") > "$server_fixture"
+
+  if PATH="$bin_dir:$PATH" VPSBUDDY_TEST_RECORD="$record" bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=pi
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    test_home="$2"
+    home_dir="$test_home"
+    cli_link_dir="$3"
+    cli_link_manifest="$3/manifest"
+    admin_home_dir() {
+      printf "%s\n" "$test_home"
+    }
+    systemctl() {
+      return 0
+    }
+    run_as_admin "$home_dir" "pi --version"
+    run_as_admin "$home_dir" "pi update --self"
+    install_agent_cli_update_timer
+    PATH="$4:$PATH" bash "$5/vpsbuddy-cli-update"
+  ' bash "$server_fixture" "$home_dir" "$link_dir" "$system_bin" "$sbin_dir"; then
+    assert_contains "Pi version and update checks use private Node" "$(cat "$record")" "pi-private-node"
+    assert_not_contains "Pi checks do not use system Node" "$(cat "$record")" "system-node"
+    if grep -F "update --self" "$record" | grep -Fq "pi-private-node"; then
+      pass "Pi updater uses the private Node"
+    else
+      fail "Pi updater uses the private Node"
+    fi
+  else
+    fail "Pi version and update checks use private Node"
+  fi
+
+  rm -rf "$server_fixture" "$home_dir" "$system_bin" "$bin_dir" "$link_dir" "$sbin_dir" "$systemd_dir" "$record"
 }
 
 test_generated_cli_updater_reports_failures() {
@@ -470,6 +1214,7 @@ FAKE_SUDO
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=grok
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
@@ -501,6 +1246,72 @@ FAKE_SUDO
   rm -rf "$server_fixture" "$sbin_dir" "$systemd_dir" "$link_dir" "$home_dir" "$bin_dir" "$record"
 }
 
+test_generated_cli_updater_refuses_unmanaged_link() {
+  local server_script server_fixture sbin_dir systemd_dir link_dir home_dir bin_dir record
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  sbin_dir="$(mktemp -d /tmp/vpsbuddy-cli-updater-unmanaged-sbin.XXXXXX)"
+  systemd_dir="$(mktemp -d /tmp/vpsbuddy-cli-updater-unmanaged-systemd.XXXXXX)"
+  link_dir="$(mktemp -d /tmp/vpsbuddy-cli-updater-unmanaged-links.XXXXXX)"
+  home_dir="$(mktemp -d /tmp/vpsbuddy-cli-updater-unmanaged-home.XXXXXX)"
+  bin_dir="$(mktemp -d /tmp/vpsbuddy-cli-updater-unmanaged-bin.XXXXXX)"
+  record="$(mktemp /tmp/vpsbuddy-cli-updater-unmanaged-record.XXXXXX)"
+  mkdir -p "$home_dir/.grok/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$home_dir/.grok/bin/grok"
+  chmod 755 "$home_dir/.grok/bin/grok"
+  ln -s "$home_dir/.grok/bin/grok" "$link_dir/grok"
+  cat > "$bin_dir/sudo" << 'FAKE_SUDO'
+#!/usr/bin/env bash
+shift 12
+printf '%s\n' "$1" >>"$VPSBUDDY_TEST_RECORD"
+exit 0
+FAKE_SUDO
+  chmod 755 "$bin_dir/sudo"
+  printf '%s\n' "$server_script" |
+    sed -e '/^case "\$phase" in/,$d' \
+      -e "s|/usr/local/sbin|$sbin_dir|g" \
+      -e "s|/etc/systemd/system|$systemd_dir|g" > "$server_fixture"
+
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis=grok
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    cli_link_dir="$2"
+    cli_link_manifest="$2/manifest"
+    test_home="$3"
+    admin_home_dir() {
+      printf "%s" "$test_home"
+    }
+    systemctl() {
+      return 0
+    }
+    install_agent_cli_update_timer
+    if PATH="$4:$PATH" VPSBUDDY_TEST_RECORD="$5" bash "$6/vpsbuddy-cli-update"; then
+      exit 1
+    fi
+    [[ -L "$cli_link_dir/grok" ]]
+    [[ "$(readlink "$cli_link_dir/grok")" == "$3/.grok/bin/grok" ]]
+    [[ ! -e "$cli_link_manifest" ]]
+    grep -Fq "grok update" "$5"
+  ' bash "$server_fixture" "$link_dir" "$home_dir" "$bin_dir" "$record" "$sbin_dir"; then
+    pass "generated CLI updater refuses an unmanaged link"
+  else
+    fail "generated CLI updater refuses an unmanaged link"
+  fi
+
+  rm -rf "$server_fixture" "$sbin_dir" "$systemd_dir" "$link_dir" "$home_dir" "$bin_dir" "$record"
+}
 test_generated_auth_helper_honors_selected_clis() {
   local server_script server_fixture auth_path bin_dir record record_output expected
   server_script="$(generate_server_script)"
@@ -529,13 +1340,16 @@ FAKE_CLI
     enable_tailscale_ssh=0
     web_enabled=1
     selected_clis="codex grok github pi opencode amp droid claude"
+    selected_clis_present=1
     automatic_updates=0
     full_sudo=0
     swap_enabled=0
     swap_size=
     source "$1"
     install_agent_auth_helper
-  ' bash "$server_fixture"; then
+    sed "s|/usr/bin/gh|$3/gh|g" "$2" >"$2.rewritten"
+    mv "$2.rewritten" "$2"
+  ' bash "$server_fixture" "$auth_path" "$bin_dir"; then
     if VPSBUDDY_TEST_RECORD="$record" PATH="$bin_dir:$PATH" /bin/bash "$auth_path" --all > /dev/null 2>&1; then
       record_output="$(cat "$record")"
       for expected in \
@@ -560,10 +1374,12 @@ FAKE_CLI
 }
 
 test_auth_helper_honors_selected_clis() {
-  local bin_dir record empty_path output cli_id expected
+  local bin_dir record empty_path auth_path output cli_id expected
   bin_dir="$(mktemp -d /tmp/vpsbuddy-auth-bin.XXXXXX)"
   record="$(mktemp /tmp/vpsbuddy-auth-record.XXXXXX)"
   empty_path="$(mktemp -d /tmp/vpsbuddy-auth-empty.XXXXXX)"
+  auth_path="$(mktemp /tmp/vpsbuddy-auth-fixture.XXXXXX)"
+  sed "s|/usr/bin/gh|$bin_dir/gh|g" lib/templates/vpsbuddy-auth.sh > "$auth_path"
   cat > "$bin_dir/fake-cli" << 'FAKE_CLI'
 #!/usr/bin/env bash
 printf '%s %s\n' "${0##*/}" "$*" >>"$VPSBUDDY_TEST_RECORD"
@@ -577,7 +1393,7 @@ FAKE_CLI
     VPSBUDDY_TEST_RECORD="$record" \
       selected_clis="codex grok github pi opencode amp droid claude" \
       PATH="$bin_dir:$PATH" \
-      bash lib/templates/vpsbuddy-auth.sh --all 2>&1
+      bash "$auth_path" --all 2>&1
   )"
   for expected in \
     "codex login" \
@@ -595,21 +1411,21 @@ FAKE_CLI
   if VPSBUDDY_TEST_RECORD="$record" \
     selected_clis=github \
     PATH="$bin_dir:$PATH" \
-    bash lib/templates/vpsbuddy-auth.sh --codex > /dev/null 2>&1; then
+    bash "$auth_path" --codex > /dev/null 2>&1; then
     fail "auth helper rejects an unselected CLI"
   else
     pass "auth helper rejects an unselected CLI"
   fi
 
   for cli_id in pi amp droid; do
-    if selected_clis="$cli_id" PATH="$empty_path" /bin/bash lib/templates/vpsbuddy-auth.sh --status > /dev/null 2>&1; then
+    if selected_clis="$cli_id" PATH="$empty_path" /bin/bash "$auth_path" --status > /dev/null 2>&1; then
       fail "auth status rejects missing $cli_id"
     else
       pass "auth status rejects missing $cli_id"
     fi
   done
 
-  rm -rf "$bin_dir" "$record" "$empty_path"
+  rm -rf "$bin_dir" "$record" "$empty_path" "$auth_path"
 }
 
 test_configuration_has_no_hidden_operator_defaults() {
@@ -620,6 +1436,7 @@ test_configuration_has_no_hidden_operator_defaults() {
   assert_eq "swap size has no default" "" "$VPS_SWAP_SIZE"
   assert_eq "web exposure has no default" "" "$VPS_WEB"
   assert_eq "developer CLI choice has no default" "" "$VPS_SELECTED_CLIS"
+  assert_eq "developer CLI selection marker has no default" "" "$VPS_SELECTED_CLIS_PRESENT"
   assert_eq "sudo policy has no default" "" "$VPS_FULL_SUDO"
 }
 
@@ -752,6 +1569,146 @@ ${TEST_CONFIRMATION}"
     }
     run_bootstrap
   ' 2>&1
+}
+
+test_prepare_installer_failure_never_starts_hardening() {
+  local server_script server_fixture record public_key output
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  record="$(mktemp /tmp/vpsbuddy-prepare-failure-record.XXXXXX)"
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  if TEST_PUBLIC_KEY="$public_key" \
+    TEST_SERVER_FIXTURE="$server_fixture" \
+    TEST_RECORD="$record" \
+    bash -c '
+      set -Eeuo pipefail
+      source lib/vpsbuddy.sh
+      exec 3<<<"deploy
+yes
+
+none
+no
+2
+no
+no
+no
+yes"
+      VPS_INPUT_FD=3
+      require_vps_root() {
+        :
+      }
+      detect_existing_public_key() {
+        printf "%s\n" "$TEST_PUBLIC_KEY"
+      }
+      run_server_phase() {
+        local phase_name="$1"
+        printf "phase:%s\n" "$phase_name" >>"$TEST_RECORD"
+        if [[ "$phase_name" != prepare ]]; then
+          return 0
+        fi
+
+        (
+          phase=prepare
+          admin_user="$VPS_ADMIN_USER"
+          public_key="$VPS_PUBLIC_KEY"
+          requested_hostname="$VPS_HOSTNAME"
+          enable_tailscale_ssh="$VPS_ENABLE_TAILSCALE_SSH"
+          web_enabled="$VPS_WEB"
+          selected_clis="$VPS_SELECTED_CLIS"
+          selected_clis_present="$VPS_SELECTED_CLIS_PRESENT"
+          automatic_updates="$VPS_AUTOMATIC_UPDATES"
+          full_sudo="$VPS_FULL_SUDO"
+          swap_enabled="$VPS_SWAP_ENABLED"
+          swap_size="$VPS_SWAP_SIZE"
+          source "$TEST_SERVER_FIXTURE"
+          require_root() {
+            :
+          }
+          select_platform() {
+            PKG_BACKEND=apt
+            PKG_BIN=apt-get
+            FIREWALL_BACKEND=ufw
+            SSHD_SERVICE=ssh
+            SUDO_GROUP=sudo
+          }
+          install_required_packages() {
+            :
+          }
+          remove_legacy_vps_bootstrap_timers() {
+            :
+          }
+          remove_deselected_cli_links() {
+            :
+          }
+          install_swap() {
+            :
+          }
+          enable_service() {
+            :
+          }
+          configure_automatic_updates() {
+            :
+          }
+          install_intrusion_prevention() {
+            :
+          }
+          ensure_admin_user() {
+            :
+          }
+          install_agent_sudo_helpers() {
+            :
+          }
+          set_requested_hostname() {
+            :
+          }
+          ensure_tailscale_connected() {
+            TAILSCALE_IP=100.64.0.10
+          }
+          disable_tailscale_ssh_for_verification() {
+            :
+          }
+          configure_firewall() {
+            :
+          }
+          validate_prepare_state() {
+            :
+          }
+          install_grok_cli() {
+            printf "installer-failure\n" >>"$TEST_RECORD"
+            return 1
+          }
+          remove_agent_cli_update_timer() {
+            :
+          }
+          remove_agent_auth_helper() {
+            :
+          }
+          install_agent_auth_helper() {
+            printf "auth-helper\n" >>"$TEST_RECORD"
+          }
+          install_agent_cli_update_timer() {
+            printf "cli-timer\n" >>"$TEST_RECORD"
+          }
+          print_selected_cli_versions() {
+            :
+          }
+          run_prepare
+        )
+      }
+      run_bootstrap
+    '; then
+    fail "forced prepare installer failure stops before hardening"
+  else
+    output="$(cat "$record")"
+    assert_contains "forced prepare installer failure runs prepare" "$output" "phase:prepare"
+    assert_contains "forced prepare installer failure is recorded" "$output" "installer-failure"
+    assert_not_contains "forced prepare installer failure never starts hardening" "$output" "phase:harden"
+    assert_not_contains "forced prepare installer failure does not install auth helper" "$output" "auth-helper"
+  fi
+
+  rm -rf "$server_fixture" "$record"
 }
 
 test_tailnet_confirmation_controls_hardening() {
@@ -935,6 +1892,7 @@ test_server_config_prelude_carries_every_choice() {
   VPS_ENABLE_TAILSCALE_SSH="0"
   VPS_WEB="1"
   VPS_SELECTED_CLIS="codex github claude"
+  VPS_SELECTED_CLIS_PRESENT="1"
   VPS_AUTOMATIC_UPDATES="1"
   VPS_FULL_SUDO="0"
   VPS_SWAP_ENABLED="1"
@@ -944,21 +1902,31 @@ test_server_config_prelude_carries_every_choice() {
   assert_contains "phase prelude carries admin user" "$prelude" "admin_user=ops"
   assert_contains "phase prelude carries swap size" "$prelude" "swap_size=8G"
   assert_contains "phase prelude carries CLI choice" "$prelude" "selected_clis=codex\ github\ claude"
+  assert_contains "phase prelude carries CLI selection marker" "$prelude" "selected_clis_present=1"
   assert_contains "phase prelude carries update choice" "$prelude" "automatic_updates=1"
 }
 
 test_selected_cli_prompt_accepts_formats
 test_generated_selected_cli_behavior
+test_generated_missing_cli_selection_state
 test_generated_installer_failure_is_not_masked
 test_generated_cli_link_cleanup
 test_generated_cli_link_safety
+test_successful_rerun_deselects_managed_cli
+test_github_cli_requires_managed_package
+test_github_cli_rpm_package_path
+test_selected_cli_install_dispatch
+test_droid_only_installs_xdg_utils
+test_generated_pi_node_precedence
 test_generated_cli_updater_reports_failures
+test_generated_cli_updater_refuses_unmanaged_link
 test_generated_auth_helper_honors_selected_clis
 test_auth_helper_honors_selected_clis
 test_configuration_has_no_hidden_operator_defaults
 test_guided_dry_run_captures_operator_configuration
 test_fallback_key_and_no_swap_are_captured
 test_root_and_restricted_detected_keys_are_rejected
+test_prepare_installer_failure_never_starts_hardening
 test_tailnet_confirmation_controls_hardening
 test_legacy_ssh_orchestration_is_removed
 test_checkout_free_installer_downloads_and_runs_bundle
