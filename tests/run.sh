@@ -1722,6 +1722,71 @@ test_root_and_restricted_detected_keys_are_rejected() {
   assert_eq "restricted authorized_keys line is not stripped and reused" "" "$detected"
 }
 
+test_login_home_uses_local_passwd_by_uid() {
+  local actual expected
+  expected="$(awk -F: '$3 == 0 { print $6; exit }' /etc/passwd)"
+  actual="$(
+    unset SUDO_UID SUDO_USER
+    # shellcheck disable=SC2317,SC2329
+    getent() { return 97; }
+    id() {
+      [[ "${1:-}" == "-u" ]] || return 98
+      printf '0\n'
+    }
+    login_home
+  )"
+
+  assert_eq "login home avoids NSS name lookup" "$expected" "$actual"
+}
+
+test_non_regular_authorized_keys_does_not_block_recovery() {
+  local key_home output public_key timeout_bin
+  key_home="$(mktemp -d "${TMPDIR:-/tmp}/vpsbuddy-key-fifo.XXXXXX")"
+  public_key="$(cat tests/fixtures/id_ed25519.pub)"
+  timeout_bin="$(command -v timeout || command -v gtimeout || true)"
+  mkdir -p "$key_home/.ssh"
+  mkfifo "$key_home/.ssh/authorized_keys"
+
+  if [[ -z "$timeout_bin" ]]; then
+    printf 'ok - non-regular authorized_keys check skipped: timeout unavailable\n'
+    unlink "$key_home/.ssh/authorized_keys"
+    rm -rf "$key_home"
+    return
+  fi
+
+  # The inner shell expands the test fixture variables.
+  # shellcheck disable=SC2016
+  if output="$(
+    TEST_KEY_HOME="$key_home" TEST_PUBLIC_KEY="$public_key" "$timeout_bin" 2 bash -c '
+      set -Eeuo pipefail
+      source lib/vpsbuddy.sh
+      exec 3<<<"ubuntu
+${TEST_PUBLIC_KEY}
+
+none
+no
+none
+no
+no
+no"
+      VPS_INPUT_FD=3
+      login_home() { printf "%s\n" "$TEST_KEY_HOME"; }
+      has_active_swap() { return 1; }
+      collect_configuration
+      printf "admin:%s\n" "$VPS_ADMIN_USER"
+      printf "key:%s\n" "$(public_key_fingerprint "$VPS_PUBLIC_KEY")"
+    ' 2>&1
+  )"; then
+    assert_contains "non-regular authorized_keys falls back to pasted key" "$output" "Paste the SSH public key to install"
+    assert_contains "guided recovery continues after non-regular key state" "$output" "admin:ubuntu"
+  else
+    fail "non-regular authorized_keys does not block guided recovery: $output"
+  fi
+
+  unlink "$key_home/.ssh/authorized_keys"
+  rm -rf "$key_home"
+}
+
 run_stubbed_bootstrap() {
   local confirmation="$1"
   local public_key
@@ -2433,6 +2498,8 @@ test_configuration_has_no_hidden_operator_defaults
 test_guided_dry_run_captures_operator_configuration
 test_fallback_key_and_no_swap_are_captured
 test_root_and_restricted_detected_keys_are_rejected
+test_login_home_uses_local_passwd_by_uid
+test_non_regular_authorized_keys_does_not_block_recovery
 test_prepare_installer_failure_still_reaches_hardening
 test_server_phase_cleanup_does_not_leak_return_trap
 test_resume_options_are_accepted

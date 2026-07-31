@@ -357,9 +357,9 @@ public_key_fingerprint() {
 }
 
 login_home() {
-  local login_user="${SUDO_USER:-$(id -un)}"
+  local login_uid="${SUDO_UID:-$(id -u)}"
 
-  getent passwd "$login_user" 2> /dev/null | cut -d: -f6
+  awk -F: -v uid="$login_uid" '$3 == uid { print $6; exit }' /etc/passwd
 }
 
 detect_existing_public_key() {
@@ -368,7 +368,7 @@ detect_existing_public_key() {
   home_dir="$(login_home)"
   [[ -n "$home_dir" ]] || return 1
   authorized_keys="$home_dir/.ssh/authorized_keys"
-  [[ -r "$authorized_keys" ]] || return 1
+  [[ -f "$authorized_keys" && -r "$authorized_keys" ]] || return 1
 
   awk '
     $1 ~ /^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp(256|384|521)|sk-(ssh-ed25519|ecdsa-sha2-nistp256)@openssh.com)$/ && NF >= 2 {
