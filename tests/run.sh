@@ -642,9 +642,9 @@ test_github_cli_requires_managed_package() {
   printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
   state="$root_dir/package-installed"
   gh_path="$root_dir/usr/bin/gh"
-  mkdir -p "$(dirname "$gh_path")" "$root_dir/etc/apt/keyrings" "$root_dir/etc/apt/sources.list.d"
-  printf 'signed-key\n' > "$root_dir/etc/apt/keyrings/githubcli-archive-keyring.gpg"
-  printf 'deb [arch=amd64 signed-by=%s] https://cli.github.com/packages stable main\n' \
+  mkdir -p "$(dirname "$gh_path")" "$root_dir/etc/apt/keyrings" "$root_dir/etc/apt/sources.list.d" "$root_dir/etc/apt/preferences.d"
+  printf 'untrusted-key\n' > "$root_dir/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+  printf 'deb [arch=amd64] https://cli.github.com/packages stable main\n# signed-by=%s\n' \
     "$root_dir/etc/apt/keyrings/githubcli-archive-keyring.gpg" \
     > "$root_dir/etc/apt/sources.list.d/github-cli.list"
   printf '#!/usr/bin/env bash\nprintf "gh-package\\n"\n' > "$gh_path"
@@ -672,7 +672,7 @@ DPKG
   cat > "$bin_dir/apt-get" << 'APT_GET'
 #!/usr/bin/env bash
 printf 'apt-get %s\n' "$*" >>"$VPSBUDDY_TEST_RECORD"
-if [[ "$*" == *"install -y gh"* ]]; then
+if [[ "$*" == *"install -y --reinstall --allow-downgrades gh"* ]]; then
   touch "$VPSBUDDY_TEST_GH_STATE"
   mkdir -p "$(dirname "$VPSBUDDY_TEST_GH_BINARY")"
   printf '#!/usr/bin/env bash\nprintf "gh-package\\n"\n' >"$VPSBUDDY_TEST_GH_BINARY"
@@ -691,9 +691,14 @@ while [[ "$#" -gt 0 ]]; do
   fi
 done
 printf 'curl\n' >>"$VPSBUDDY_TEST_RECORD"
-printf 'signed-key\n' >"$output"
+printf '%s\n' "${VPSBUDDY_TEST_GH_KEY_CONTENT:-signed-key}" >"$output"
 CURL
-  chmod 755 "$bin_dir/dpkg-query" "$bin_dir/dpkg" "$bin_dir/apt-get" "$bin_dir/curl"
+  cat > "$bin_dir/gpg" << 'GPG'
+#!/usr/bin/env bash
+key_file="${@: -1}"
+grep -Fqx 'signed-key' "$key_file"
+GPG
+  chmod 755 "$bin_dir/dpkg-query" "$bin_dir/dpkg" "$bin_dir/apt-get" "$bin_dir/curl" "$bin_dir/gpg"
 
   if PATH="$bin_dir:$root_dir/path-bin:$PATH" \
     VPSBUDDY_TEST_RECORD="$record" \
@@ -719,14 +724,36 @@ CURL
       github_cli_binary="$2/usr/bin/gh"
       github_cli_apt_keyring="$2/etc/apt/keyrings/githubcli-archive-keyring.gpg"
       github_cli_apt_repo="$2/etc/apt/sources.list.d/github-cli.list"
+      github_cli_apt_preferences="$2/etc/apt/preferences.d/github-cli"
       github_cli_rpm_repo="$2/etc/yum.repos.d/gh-cli.repo"
+      if github_cli_apt_repository_configured; then
+        exit 1
+      fi
       install_github_cli
-      [[ ! -s "$VPSBUDDY_TEST_RECORD" ]]
+      grep -Fq "curl" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "apt-get update" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "apt-get install -y --reinstall --allow-downgrades gh" "$VPSBUDDY_TEST_RECORD"
+      github_cli_package_is_managed
+      grep -Fqx "Pin-Priority: 1001" "$github_cli_apt_preferences"
+
+      old_key="$(cat "$github_cli_apt_keyring")"
+      export VPSBUDDY_TEST_GH_KEY_CONTENT=invalid-key
+      : >"$VPSBUDDY_TEST_RECORD"
+      if install_github_cli; then
+        exit 1
+      fi
+      [[ "$(cat "$github_cli_apt_keyring")" == "$old_key" ]]
+      if grep -Fq "apt-get update" "$VPSBUDDY_TEST_RECORD"; then
+        exit 1
+      fi
+      unset VPSBUDDY_TEST_GH_KEY_CONTENT
+
+      : >"$VPSBUDDY_TEST_RECORD"
       printf "%s\n" "#!/usr/bin/env bash" "exit 1" >"$github_cli_binary"
       install_github_cli
-      grep -Fq "apt-get install -y gh" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "apt-get install -y --reinstall --allow-downgrades gh" "$VPSBUDDY_TEST_RECORD"
       : >"$VPSBUDDY_TEST_RECORD"
-      rm -f "$VPSBUDDY_TEST_GH_STATE" "$github_cli_binary" "$github_cli_apt_keyring" "$github_cli_apt_repo"
+      rm -f "$VPSBUDDY_TEST_GH_STATE" "$github_cli_binary" "$github_cli_apt_keyring" "$github_cli_apt_repo" "$github_cli_apt_preferences"
       mkdir -p "$2/path-bin"
       printf "%s\n" "#!/usr/bin/env bash" >"$2/path-bin/gh"
       chmod 755 "$2/path-bin/gh"
@@ -740,7 +767,7 @@ CURL
       [[ "$(admin_command_path "$2" github)" == "$github_cli_binary" ]]
       grep -Fq "curl" "$VPSBUDDY_TEST_RECORD"
       grep -Fq "apt-get update" "$VPSBUDDY_TEST_RECORD"
-      grep -Fq "apt-get install -y gh" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "apt-get install -y --reinstall --allow-downgrades gh" "$VPSBUDDY_TEST_RECORD"
       github_cli_package_is_managed
     ' bash "$server_fixture" "$root_dir"; then
     pass "GitHub CLI uses the signed package path instead of PATH"
@@ -763,7 +790,7 @@ test_github_cli_rpm_package_path() {
   state="$root_dir/package-installed"
   gh_path="$root_dir/usr/bin/gh"
   mkdir -p "$(dirname "$gh_path")" "$root_dir/etc/yum.repos.d"
-  cat > "$root_dir/etc/yum.repos.d/gh-cli.repo" << 'REPO'
+  cat > "$root_dir/rpm-source.repo" << 'REPO'
 [gh-cli]
 name=packages for the GitHub CLI
 baseurl=https://cli.github.com/packages/rpm
@@ -771,7 +798,16 @@ enabled=1
 gpgcheck=1
 gpgkey=https://cli.github.com/packages/githubcli-archive-keyring.asc
 REPO
-  cp "$root_dir/etc/yum.repos.d/gh-cli.repo" "$root_dir/rpm-source.repo"
+  cat > "$root_dir/etc/yum.repos.d/gh-cli.repo" << 'REPO'
+[gh-cli]
+baseurl=https://cli.github.com/packages/rpm
+enabled=1
+gpgcheck=0
+
+[other]
+gpgcheck=1
+gpgkey=https://cli.github.com/packages/githubcli-archive-keyring.asc
+REPO
   printf '#!/usr/bin/env bash\nprintf "gh-rpm\\n"\n' > "$gh_path"
   chmod 755 "$gh_path"
   touch "$state"
@@ -794,7 +830,7 @@ RPM
   cat > "$bin_dir/dnf" << 'DNF'
 #!/usr/bin/env bash
 printf 'dnf %s\n' "$*" >>"$VPSBUDDY_TEST_RECORD"
-if [[ "$*" == "install -y gh" ]]; then
+if [[ "$*" == *"--enablerepo=gh-cli"* && "$*" == *"-y gh"* ]]; then
   touch "$VPSBUDDY_TEST_RPM_STATE"
   mkdir -p "$(dirname "$VPSBUDDY_TEST_RPM_BINARY")"
   printf '#!/usr/bin/env bash\nprintf "gh-rpm\\n"\n' >"$VPSBUDDY_TEST_RPM_BINARY"
@@ -843,12 +879,20 @@ CURL
       github_cli_rpm_repo="$2/etc/yum.repos.d/gh-cli.repo"
       github_cli_apt_keyring="$2/etc/apt/keyrings/githubcli-archive-keyring.gpg"
       github_cli_apt_repo="$2/etc/apt/sources.list.d/github-cli.list"
+      github_cli_apt_preferences="$2/etc/apt/preferences.d/github-cli"
+      if github_cli_rpm_repository_configured; then
+        exit 1
+      fi
       install_github_cli
-      [[ ! -s "$VPSBUDDY_TEST_RECORD" ]]
+      grep -Fq "curl" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "dnf --disablerepo=* --enablerepo=gh-cli install -y gh" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "dnf --disablerepo=* --enablerepo=gh-cli reinstall -y gh" "$VPSBUDDY_TEST_RECORD"
+      github_cli_package_is_managed
+      : >"$VPSBUDDY_TEST_RECORD"
 
       printf "%s\n" "#!/usr/bin/env bash" "exit 1" >"$github_cli_binary"
       install_github_cli
-      grep -Fq "dnf install -y gh" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "dnf --disablerepo=* --enablerepo=gh-cli install -y gh" "$VPSBUDDY_TEST_RECORD"
       : >"$VPSBUDDY_TEST_RECORD"
 
       rm -f "$VPSBUDDY_TEST_RPM_STATE" "$github_cli_binary" "$github_cli_rpm_repo"
@@ -861,8 +905,28 @@ CURL
       install_github_cli
       [[ "$(admin_command_path "$2" github)" == "$github_cli_binary" ]]
       grep -Fq "curl" "$VPSBUDDY_TEST_RECORD"
-      grep -Fq "dnf install -y gh" "$VPSBUDDY_TEST_RECORD"
+      grep -Fq "dnf --disablerepo=* --enablerepo=gh-cli install -y gh" "$VPSBUDDY_TEST_RECORD"
       github_cli_package_is_managed
+
+      : >"$VPSBUDDY_TEST_RECORD"
+      printf "%s\n" \
+        "[gh-cli]" \
+        "baseurl=https://cli.github.com/packages/rpm" \
+        "enabled=1" \
+        "gpgcheck=1" \
+        "gpgkey=https://cli.github.com/packages/githubcli-archive-keyring.asc" \
+        "" \
+        "[unsigned-extra]" \
+        "baseurl=https://example.invalid/packages" \
+        "enabled=1" \
+        "gpgcheck=0" \
+        >"$VPSBUDDY_TEST_RPM_SOURCE"
+      if install_github_cli; then
+        exit 1
+      fi
+      if grep -Fq "dnf --disablerepo=* --enablerepo=gh-cli install -y gh" "$VPSBUDDY_TEST_RECORD"; then
+        exit 1
+      fi
     ' bash "$server_fixture" "$root_dir"; then
     pass "GitHub CLI uses the signed RPM package path"
   else
@@ -996,6 +1060,69 @@ FAKE_CURL
   rm -rf "$server_fixture" "$home_dir" "$link_dir" "$bin_dir" "$record"
 }
 
+test_generated_cli_candidate_paths() {
+  local server_script server_fixture home_dir
+  server_script="$(generate_server_script)"
+  server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
+  home_dir="$(mktemp -d /tmp/vpsbuddy-cli-candidates.XXXXXX)"
+  printf '%s\n' "$server_script" | sed '/^case "\$phase" in/,$d' > "$server_fixture"
+
+  if bash -c '
+    set -Eeuo pipefail
+    phase=prepare
+    admin_user=deploy
+    public_key=ssh-ed25519
+    requested_hostname=
+    enable_tailscale_ssh=0
+    web_enabled=1
+    selected_clis="codex amp"
+    selected_clis_present=1
+    automatic_updates=0
+    full_sudo=0
+    swap_enabled=0
+    swap_size=
+    source "$1"
+    home_dir="$2"
+
+    make_candidate() {
+      local path="$1"
+      mkdir -p "$(dirname "$path")"
+      printf "#!/usr/bin/env bash\nexit 0\n" >"$path"
+      chmod 755 "$path"
+    }
+
+    for candidate in \
+      "$home_dir/.codex/bin/codex" \
+      "$home_dir/.local/bin/codex" \
+      "$home_dir/bin/codex"; do
+      make_candidate "$candidate"
+      [[ "$(admin_command_path "$home_dir" codex)" == "$candidate" ]]
+      rm -f "$candidate"
+    done
+
+    for candidate in \
+      "$home_dir/.local/bin/amp" \
+      "$home_dir/.amp/bin/amp"; do
+      make_candidate "$candidate"
+      [[ "$(admin_command_path "$home_dir" amp)" == "$candidate" ]]
+      rm -f "$candidate"
+    done
+
+    run_as_admin() {
+      printf "/usr/bin/codex\n"
+    }
+    if admin_command_path "$home_dir" codex; then
+      exit 1
+    fi
+  ' bash "$server_fixture" "$home_dir"; then
+    pass "generated CLI path lookup executes every Codex and Amp candidate"
+  else
+    fail "generated CLI path lookup executes every Codex and Amp candidate"
+  fi
+
+  rm -rf "$server_fixture" "$home_dir"
+}
+
 test_droid_only_installs_xdg_utils() {
   local server_script server_fixture home_dir link_dir bin_dir record output xdg_state
   server_script="$(generate_server_script)"
@@ -1090,7 +1217,7 @@ CURL
 }
 
 test_generated_pi_node_precedence() {
-  local server_script server_fixture home_dir system_bin bin_dir link_dir sbin_dir systemd_dir record
+  local server_script server_fixture home_dir system_bin bin_dir link_dir sbin_dir systemd_dir record shell_record
   server_script="$(generate_server_script)"
   server_fixture="$(mktemp /tmp/vpsbuddy-server-functions.XXXXXX)"
   home_dir="$(mktemp -d /tmp/vpsbuddy-pi-home.XXXXXX)"
@@ -1100,7 +1227,8 @@ test_generated_pi_node_precedence() {
   sbin_dir="$(mktemp -d /tmp/vpsbuddy-pi-sbin.XXXXXX)"
   systemd_dir="$(mktemp -d /tmp/vpsbuddy-pi-systemd.XXXXXX)"
   record="$home_dir/pi-node-record"
-  mkdir -p "$home_dir/.local/share/pi-node/current/bin" "$home_dir/.local/bin"
+  shell_record="$home_dir/user-shell-record"
+  mkdir -p "$home_dir/.local/share/pi-node/current/bin" "$home_dir/.local/bin" "$home_dir/.grok/bin"
 
   printf '#!/bin/bash\nprintf "pi-private-node\n"\n' \
     > "$home_dir/.local/share/pi-node/current/bin/node"
@@ -1112,6 +1240,21 @@ test_generated_pi_node_precedence() {
 printf '%s %s\n' "$*" "$(node --version)" >>"$HOME/pi-node-record"
 PI
   chmod 755 "$home_dir/.local/bin/pi"
+  cat > "$home_dir/.grok/bin/grok" << 'GROK'
+#!/bin/bash
+printf 'managed-grok %s\n' "$*" >>"$HOME/pi-node-record"
+GROK
+  cat > "$system_bin/grok" << 'SYSTEM_GROK'
+#!/bin/bash
+printf 'system-grok %s\n' "$*" >>"$HOME/pi-node-record"
+SYSTEM_GROK
+  chmod 755 "$home_dir/.grok/bin/grok" "$system_bin/grok"
+  cat > "$home_dir/.local/bin/bash" << 'USER_BASH'
+#!/bin/bash
+printf 'user bash was selected\n' >"$HOME/user-shell-record"
+exit 99
+USER_BASH
+  chmod 755 "$home_dir/.local/bin/bash"
 
   cat > "$bin_dir/sudo" << 'FAKE_SUDO'
 #!/bin/bash
@@ -1126,7 +1269,7 @@ FAKE_SUDO
   chmod 755 "$bin_dir/sudo"
 
   sed \
-    -e "s|:/usr/bin:/usr/local/bin:/usr/sbin:/usr/local/sbin:/sbin:/bin\"|:$system_bin:/usr/bin:/bin\"|g" \
+    -e "s|:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:|:$system_bin:/usr/bin:/bin:|g" \
     -e "s|/usr/local/sbin|$sbin_dir|g" \
     -e "s|/etc/systemd/system|$systemd_dir|g" \
     -e '/^case "\$phase" in/,$d' \
@@ -1140,7 +1283,7 @@ FAKE_SUDO
     requested_hostname=
     enable_tailscale_ssh=0
     web_enabled=1
-    selected_clis=pi
+    selected_clis="pi grok"
     selected_clis_present=1
     automatic_updates=0
     full_sudo=0
@@ -1157,17 +1300,25 @@ FAKE_SUDO
     systemctl() {
       return 0
     }
-    run_as_admin "$home_dir" "pi --version"
-    run_as_admin "$home_dir" "pi update --self"
+    run_admin_cli "$home_dir" pi --version
+    run_admin_cli "$home_dir" pi update --self
+    run_admin_cli "$home_dir" grok update
     install_agent_cli_update_timer
     PATH="$4:$PATH" bash "$5/vpsbuddy-cli-update"
   ' bash "$server_fixture" "$home_dir" "$link_dir" "$system_bin" "$sbin_dir"; then
     assert_contains "Pi version and update checks use private Node" "$(cat "$record")" "pi-private-node"
     assert_not_contains "Pi checks do not use system Node" "$(cat "$record")" "system-node"
+    assert_contains "managed CLI path wins over a system collision" "$(cat "$record")" "managed-grok update"
+    assert_not_contains "system CLI collision is not executed" "$(cat "$record")" "system-grok"
     if grep -F "update --self" "$record" | grep -Fq "pi-private-node"; then
       pass "Pi updater uses the private Node"
     else
       fail "Pi updater uses the private Node"
+    fi
+    if [[ ! -e "$shell_record" ]]; then
+      pass "system shell stays ahead of user CLI directories"
+    else
+      fail "system shell stays ahead of user CLI directories"
     fi
   else
     fail "Pi version and update checks use private Node"
@@ -1680,10 +1831,10 @@ yes"
             return 1
           }
           remove_agent_cli_update_timer() {
-            :
+            printf "remove-cli-timer\n" >>"$TEST_RECORD"
           }
           remove_agent_auth_helper() {
-            :
+            printf "remove-auth-helper\n" >>"$TEST_RECORD"
           }
           install_agent_auth_helper() {
             printf "auth-helper\n" >>"$TEST_RECORD"
@@ -1704,6 +1855,8 @@ yes"
     output="$(cat "$record")"
     assert_contains "forced prepare installer failure runs prepare" "$output" "phase:prepare"
     assert_contains "forced prepare installer failure is recorded" "$output" "installer-failure"
+    assert_not_contains "failed rerun keeps the prior CLI timer" "$output" "remove-cli-timer"
+    assert_not_contains "failed rerun keeps the prior auth helper" "$output" "remove-auth-helper"
     assert_not_contains "forced prepare installer failure never starts hardening" "$output" "phase:harden"
     assert_not_contains "forced prepare installer failure does not install auth helper" "$output" "auth-helper"
   fi
@@ -1843,10 +1996,6 @@ test_generated_server_phase_keeps_security_controls() {
   assert_contains "automatic updates follow operator choice" "$server_script" 'vpsbuddy automatic OS updates disabled'
   assert_contains "automatic update opt-out removes timer" "$server_script" '/etc/systemd/system/vpsbuddy-os-update.timer'
   assert_contains "CLI update timer installs only after successful installs" "$server_script" 'install_agent_cli_update_timer'
-  assert_contains \
-    "CLI timer cleanup runs before installer choice" \
-    "$server_script" \
-    $'install_selected_clis() {\n  local failures=0 cli_id\n\n  remove_agent_cli_update_timer\n  remove_agent_auth_helper'
   assert_order \
     "CLI auth helper installs after failure check" \
     "$server_script" \
@@ -1916,6 +2065,7 @@ test_successful_rerun_deselects_managed_cli
 test_github_cli_requires_managed_package
 test_github_cli_rpm_package_path
 test_selected_cli_install_dispatch
+test_generated_cli_candidate_paths
 test_droid_only_installs_xdg_utils
 test_generated_pi_node_precedence
 test_generated_cli_updater_reports_failures

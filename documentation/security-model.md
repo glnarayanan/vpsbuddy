@@ -81,8 +81,12 @@ Codex, Grok, GitHub CLI, Pi, OpenCode, Amp, Factory Droid, and Claude Code are
 installed only when selected. Bootstrap does not ask for or store their tokens.
 User-scoped upstream installers run as the chosen admin user, not root. GitHub
 CLI and required OS packages are installed as root through the supported apt,
-dnf, or yum package manager. GitHub CLI uses its signed apt or rpm repository;
-the other CLI install and update paths trust official mutable upstream
+dnf, or yum package manager. Each selected GitHub CLI run validates downloaded
+repository data, pins apt to the official source or limits rpm package commands
+to the `gh-cli` repository, and replaces `gh` from that source. CLI checks and
+updates use each managed user binary by its full path. System tools stay ahead
+of other user-writable directories. The other CLI install and update paths
+trust official mutable upstream
 endpoints. Authenticate after setup with `vpsbuddy-auth`.
 The helper runs auth flows only for selected CLIs, and `xdg-utils` is installed
 only when Factory Droid is selected.

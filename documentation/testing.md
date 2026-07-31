@@ -25,9 +25,14 @@ installed. CI runs the same command in its formatter job.
 - explicit `none` and missing CLI-selection state are distinguished
 - selected-only installer dispatch executes all eight CLI branches and checks
   vendor commands and exact user-scoped binary paths
-- GitHub CLI package verification rejects an unmanaged PATH binary and accepts a
-  package-owned binary only with the signed repository configured
-- Pi version and update commands use its private Node before system paths
+- GitHub CLI package setup rejects an unmanaged PATH binary, invalid key data,
+  mixed or extra repository settings, and package installs that are not limited
+  or pinned to the official source
+- failed CLI reruns keep the prior auth helper and update timer
+- Pi version and update commands use its private Node while system tools stay
+  ahead of other user-writable CLI directories; managed CLI commands run by full
+  path even when a system command has the same name
+- every supported Codex and Amp command path is exercised
 - Factory Droid alone installs `xdg-utils`
 - successful reruns remove deselected managed links and state while retaining
   third-party binaries; unmanaged links remain untouched

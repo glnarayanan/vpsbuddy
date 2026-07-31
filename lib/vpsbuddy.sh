@@ -517,6 +517,7 @@ legacy_sudoers_dir="/etc/sudoers.d"
 github_cli_binary="/usr/bin/gh"
 github_cli_apt_keyring="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
 github_cli_apt_repo="/etc/apt/sources.list.d/github-cli.list"
+github_cli_apt_preferences="/etc/apt/preferences.d/github-cli"
 github_cli_rpm_repo="/etc/yum.repos.d/gh-cli.repo"
 
 log() {
@@ -1220,15 +1221,15 @@ run_as_admin() {
 
   sudo -H -u "$admin_user" env -i \
     HOME="$home_dir" \
-    PATH="$home_dir/.local/share/pi-node/current/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin:/usr/bin:/usr/local/bin:/usr/sbin:/usr/local/sbin:/sbin:/bin" \
+    PATH="$home_dir/.local/share/pi-node/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin" \
     SHELL=/bin/bash \
-    bash --noprofile --norc -c "set -o pipefail; $command"
+    /bin/bash --noprofile --norc -c "set -o pipefail; $command"
 }
 
 admin_command_path() {
   local home_dir="$1"
   local command_name="$2"
-  local candidate discovered_path
+  local candidate
 
   case "$command_name" in
     codex)
@@ -1270,9 +1271,23 @@ admin_command_path() {
   if [[ "$command_name" == "github" ]]; then
     return 1
   fi
-  discovered_path="$(run_as_admin "$home_dir" "command -v $(printf '%q' "$command_name")" 2>/dev/null || true)"
-  [[ "$discovered_path" == "$cli_link_dir/$command_name" ]] && return 1
-  printf '%s\n' "$discovered_path"
+  return 1
+}
+
+run_admin_cli() {
+  local home_dir="$1"
+  local command_name="$2"
+  local command_path command_argument command
+
+  shift 2
+  command_path="$(admin_command_path "$home_dir" "$command_name")"
+  [[ -n "$command_path" && -x "$command_path" ]] || return 1
+
+  command="$(printf '%q' "$command_path")"
+  for command_argument in "$@"; do
+    command+=" $(printf '%q' "$command_argument")"
+  done
+  run_as_admin "$home_dir" "$command"
 }
 
 cli_link_manifest_contains() {
@@ -1362,7 +1377,7 @@ install_codex_cli() {
     return 1
   fi
 
-  if ! run_as_admin "$home_dir" 'codex --version' >/dev/null; then
+  if ! run_admin_cli "$home_dir" codex --version >/dev/null; then
     warn "Codex CLI version check failed"
     return 1
   fi
@@ -1377,7 +1392,7 @@ install_grok_cli() {
   if [[ -x "$grok_bin" ]]; then
     log "updating official Grok CLI for $admin_user"
     warn "running Grok's mutable official updater; this is an accepted supply-chain trust boundary"
-    if ! run_as_admin "$home_dir" 'grok update'; then
+    if ! run_admin_cli "$home_dir" grok update; then
       warn "Grok CLI updater command failed"
       return 1
     fi
@@ -1399,7 +1414,7 @@ install_grok_cli() {
     warn "Grok CLI installer did not put grok on $admin_user PATH"
     return 1
   fi
-  if ! run_as_admin "$home_dir" 'grok --version' >/dev/null; then
+  if ! run_admin_cli "$home_dir" grok --version >/dev/null; then
     warn "Grok CLI version check failed"
     return 1
   fi
@@ -1442,7 +1457,7 @@ install_pi_cli() {
     warn "Pi installer did not create $home_dir/.local/bin/pi"
     return 1
   }
-  if ! run_as_admin "$home_dir" 'pi --version' >/dev/null; then
+  if ! run_admin_cli "$home_dir" pi --version >/dev/null; then
     warn "Pi CLI version check failed"
     return 1
   fi
@@ -1462,7 +1477,7 @@ install_opencode_cli() {
     warn "OpenCode installer did not create $home_dir/.opencode/bin/opencode"
     return 1
   }
-  if ! run_as_admin "$home_dir" 'opencode --version' >/dev/null; then
+  if ! run_admin_cli "$home_dir" opencode --version >/dev/null; then
     warn "OpenCode CLI version check failed"
     return 1
   fi
@@ -1487,7 +1502,7 @@ install_amp_cli() {
     warn "Amp installer did not create a usable amp command"
     return 1
   }
-  if ! run_as_admin "$home_dir" 'amp --version' >/dev/null; then
+  if ! run_admin_cli "$home_dir" amp --version >/dev/null; then
     warn "Amp CLI version check failed"
     return 1
   fi
@@ -1508,7 +1523,7 @@ install_droid_cli() {
     warn "Factory installer did not create $home_dir/.local/bin/droid"
     return 1
   }
-  if ! run_as_admin "$home_dir" 'droid --version' >/dev/null; then
+  if ! run_admin_cli "$home_dir" droid --version >/dev/null; then
     warn "Factory Droid CLI version check failed"
     return 1
   fi
@@ -1528,7 +1543,7 @@ install_claude_cli() {
     warn "Claude Code installer did not create $home_dir/.local/bin/claude"
     return 1
   }
-  if ! run_as_admin "$home_dir" 'claude --version' >/dev/null; then
+  if ! run_admin_cli "$home_dir" claude --version >/dev/null; then
     warn "Claude Code CLI version check failed"
     return 1
   fi
@@ -1539,17 +1554,69 @@ github_cli_path_is_supported() {
 }
 
 github_cli_apt_repository_configured() {
-  [[ -s "$github_cli_apt_keyring" && -f "$github_cli_apt_repo" ]] || return 1
-  grep -Eq '^[[:space:]]*deb .*https://cli\.github\.com/packages([[:space:]/]|$)' "$github_cli_apt_repo" || return 1
-  grep -Fq "signed-by=$github_cli_apt_keyring" "$github_cli_apt_repo"
+  local architecture expected_entry expected_preferences
+
+  [[ -s "$github_cli_apt_keyring" && -f "$github_cli_apt_repo" && -f "$github_cli_apt_preferences" ]] || return 1
+  architecture="$(dpkg --print-architecture 2>/dev/null)" || return 1
+  expected_entry="deb [arch=$architecture signed-by=$github_cli_apt_keyring] https://cli.github.com/packages stable main"
+  expected_preferences=$'Package: gh\nPin: origin cli.github.com\nPin-Priority: 1001'
+  grep -Fqx "$expected_entry" "$github_cli_apt_repo" &&
+    [[ "$(cat "$github_cli_apt_preferences")" == "$expected_preferences" ]]
+}
+
+github_cli_rpm_repository_file_is_valid() {
+  local repo_file="$1"
+
+  [[ -s "$repo_file" ]] || return 1
+  awk '
+    function trim(value) {
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      return value
+    }
+
+    /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+      section = $0
+      gsub(/[[:space:]]/, "", section)
+      sections++
+      in_github = (section == "[gh-cli]")
+      if (in_github) {
+        github_sections++
+        baseurl = ""
+        enabled = ""
+        gpgcheck = ""
+        gpgkey = ""
+      }
+      next
+    }
+
+    in_github && $0 !~ /^[[:space:]]*[#;]/ {
+      separator = index($0, "=")
+      if (!separator) {
+        next
+      }
+      key = trim(substr($0, 1, separator - 1))
+      value = trim(substr($0, separator + 1))
+      if (key == "baseurl") baseurl = value
+      if (key == "enabled") enabled = value
+      if (key == "gpgcheck") gpgcheck = value
+      if (key == "gpgkey") gpgkey = value
+    }
+
+    END {
+      valid = sections == 1 &&
+        github_sections == 1 &&
+        baseurl == "https://cli.github.com/packages/rpm" &&
+        enabled == "1" &&
+        gpgcheck == "1" &&
+        gpgkey == "https://cli.github.com/packages/githubcli-archive-keyring.asc"
+      exit(valid ? 0 : 1)
+    }
+  ' "$repo_file"
 }
 
 github_cli_rpm_repository_configured() {
-  [[ -s "$github_cli_rpm_repo" ]] || return 1
-  grep -Eq '^[[:space:]]*(baseurl|mirrorlist)=https://cli\.github\.com/packages(/rpm)?([[:space:]]|$)' "$github_cli_rpm_repo" || return 1
-  grep -Eq '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*1([[:space:]]|$)' "$github_cli_rpm_repo" || return 1
-  grep -Eq '^[[:space:]]*gpgcheck[[:space:]]*=[[:space:]]*1([[:space:]]|$)' "$github_cli_rpm_repo" || return 1
-  grep -Eq '^[[:space:]]*gpgkey=https://cli\.github\.com/packages/.*(gpg|keyring)' "$github_cli_rpm_repo"
+  github_cli_rpm_repository_file_is_valid "$github_cli_rpm_repo"
 }
 
 github_cli_package_owns_binary() {
@@ -1594,35 +1661,79 @@ github_cli_package_is_managed() {
 }
 
 configure_github_cli_apt_repository() {
+  local downloaded_key repository_entry staged_preferences staged_repository
+
   export DEBIAN_FRONTEND=noninteractive
   install -d -m 0755 "$(dirname "$github_cli_apt_keyring")"
-  if ! curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$github_cli_apt_keyring"; then
+  downloaded_key="$(mktemp "$(dirname "$github_cli_apt_keyring")/.githubcli-key.XXXXXX")" || return 1
+  if ! curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$downloaded_key"; then
+    rm -f "$downloaded_key"
     warn "GitHub CLI repository key download failed"
     return 1
   fi
-  chmod go+r "$github_cli_apt_keyring"
+  if ! gpg --batch --show-keys "$downloaded_key" >/dev/null 2>&1; then
+    rm -f "$downloaded_key"
+    warn "GitHub CLI repository key is not valid OpenPGP data"
+    return 1
+  fi
+  chmod 0644 "$downloaded_key"
+  if ! mv -f "$downloaded_key" "$github_cli_apt_keyring"; then
+    rm -f "$downloaded_key"
+    warn "GitHub CLI repository key install failed"
+    return 1
+  fi
+
   install -d -m 0755 "$(dirname "$github_cli_apt_repo")"
-  printf 'deb [arch=%s signed-by=%s] https://cli.github.com/packages stable main\n' \
-    "$(dpkg --print-architecture)" \
-    "$github_cli_apt_keyring" \
-    >"$github_cli_apt_repo"
+  staged_repository="$(mktemp "$(dirname "$github_cli_apt_repo")/.github-cli-list.XXXXXX")" || return 1
+  repository_entry="deb [arch=$(dpkg --print-architecture) signed-by=$github_cli_apt_keyring] https://cli.github.com/packages stable main"
+  printf '%s\n' "$repository_entry" >"$staged_repository"
+
+  install -d -m 0755 "$(dirname "$github_cli_apt_preferences")"
+  staged_preferences="$(mktemp "$(dirname "$github_cli_apt_preferences")/.github-cli-preferences.XXXXXX")" || {
+    rm -f "$staged_repository"
+    return 1
+  }
+  printf '%s\n' \
+    'Package: gh' \
+    'Pin: origin cli.github.com' \
+    'Pin-Priority: 1001' \
+    >"$staged_preferences"
+  chmod 0644 "$staged_repository" "$staged_preferences"
+  mv -f "$staged_repository" "$github_cli_apt_repo"
+  mv -f "$staged_preferences" "$github_cli_apt_preferences"
+
+  if ! github_cli_apt_repository_configured; then
+    warn "GitHub CLI apt repository configuration is invalid"
+    return 1
+  fi
 }
 
 configure_github_cli_rpm_repository() {
+  local downloaded_repo
+
   install -d -m 0755 "$(dirname "$github_cli_rpm_repo")"
-  if ! curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo -o "$github_cli_rpm_repo"; then
+  downloaded_repo="$(mktemp "$(dirname "$github_cli_rpm_repo")/.gh-cli-repo.XXXXXX")" || return 1
+  if ! curl -fsSL https://cli.github.com/packages/rpm/gh-cli.repo -o "$downloaded_repo"; then
+    rm -f "$downloaded_repo"
     warn "GitHub CLI repository download failed"
+    return 1
+  fi
+  if ! github_cli_rpm_repository_file_is_valid "$downloaded_repo"; then
+    rm -f "$downloaded_repo"
+    warn "GitHub CLI repository download is invalid"
+    return 1
+  fi
+
+  chmod 0644 "$downloaded_repo"
+  if ! mv -f "$downloaded_repo" "$github_cli_rpm_repo"; then
+    rm -f "$downloaded_repo"
+    warn "GitHub CLI repository install failed"
     return 1
   fi
 }
 
 install_github_cli() {
-  if github_cli_package_is_managed && "$github_cli_binary" --version >/dev/null 2>&1; then
-    log "GitHub CLI is already installed from the configured signed package repository"
-    return 0
-  fi
-
-  log "installing or repairing GitHub CLI from its signed package repository"
+  log "installing or updating GitHub CLI from its signed package repository"
   case "$PKG_BACKEND" in
     apt)
       configure_github_cli_apt_repository || return 1
@@ -1630,16 +1741,23 @@ install_github_cli() {
         warn "GitHub CLI package index update failed"
         return 1
       fi
-      if ! apt-get install -y gh; then
+      if ! apt-get install -y --reinstall --allow-downgrades gh; then
         warn "GitHub CLI package install failed"
         return 1
       fi
       ;;
     dnf | yum)
       configure_github_cli_rpm_repository || return 1
-      if ! "$PKG_BIN" install -y gh; then
+      if ! "$PKG_BIN" --disablerepo='*' --enablerepo=gh-cli install -y gh; then
         warn "GitHub CLI package install failed"
         return 1
+      fi
+      if ! "$PKG_BIN" --disablerepo='*' --enablerepo=gh-cli reinstall -y gh; then
+        if ! "$PKG_BIN" --disablerepo='*' --enablerepo=gh-cli downgrade -y gh ||
+          ! "$PKG_BIN" --disablerepo='*' --enablerepo=gh-cli reinstall -y gh; then
+          warn "GitHub CLI package could not be replaced from the official repository"
+          return 1
+        fi
       fi
       ;;
     *)
@@ -1660,11 +1778,10 @@ install_github_cli() {
 install_selected_clis() {
   local failures=0 cli_id
 
-  remove_agent_cli_update_timer
-  remove_agent_auth_helper
-  remove_deselected_cli_links
-
   if [[ -z "$selected_clis" ]]; then
+    remove_agent_cli_update_timer
+    remove_agent_auth_helper
+    remove_deselected_cli_links
     log "developer CLI installation skipped"
     return 0
   fi
@@ -1687,6 +1804,9 @@ install_selected_clis() {
     fail "one or more selected developer CLIs failed to install; public SSH remains open"
   fi
 
+  remove_agent_cli_update_timer
+  remove_agent_auth_helper
+  remove_deselected_cli_links
   install_agent_auth_helper
   if has_cli_updates; then
     install_agent_cli_update_timer
@@ -1840,14 +1960,14 @@ AGENT_CLI_UPDATE_HEAD
 run_as_admin() {
   sudo -H -u "$admin_user" env -i \
     HOME="$home_dir" \
-    PATH="$home_dir/.local/share/pi-node/current/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin:/usr/bin:/usr/local/bin:/usr/sbin:/usr/local/sbin:/sbin:/bin" \
+    PATH="$home_dir/.local/share/pi-node/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$home_dir/.codex/bin:$home_dir/.grok/bin:$home_dir/.opencode/bin:$home_dir/.amp/bin:$home_dir/.local/bin:$home_dir/bin" \
     SHELL=/bin/bash \
-    bash --noprofile --norc -c "set -o pipefail; $1"
+    /bin/bash --noprofile --norc -c "set -o pipefail; $1"
 }
 
 admin_command_path() {
   local command_name="$1"
-  local candidate discovered_path
+  local candidate
 
   case "$command_name" in
     codex)
@@ -1877,9 +1997,22 @@ admin_command_path() {
     printf '%s\n' "$candidate"
     return 0
   fi
-  discovered_path="$(run_as_admin "command -v $(printf '%q' "$command_name")" 2>/dev/null || true)"
-  [[ "$discovered_path" == "$cli_link_dir/$command_name" ]] && return 1
-  printf '%s\n' "$discovered_path"
+  return 1
+}
+
+run_admin_cli() {
+  local command_name="$1"
+  local command_path command_argument command
+
+  shift
+  command_path="$(admin_command_path "$command_name")"
+  [[ -n "$command_path" && -x "$command_path" ]] || return 1
+
+  command="$(printf '%q' "$command_path")"
+  for command_argument in "$@"; do
+    command+=" $(printf '%q' "$command_argument")"
+  done
+  run_as_admin "$command"
 }
 
 cli_link_manifest_contains() {
@@ -1976,42 +2109,42 @@ for cli_id in codex grok pi opencode amp droid claude; do
       ;;
     grok)
       printf '[vpsbuddy] updating Grok with xAI official grok update command; accepted mutable updater trust boundary\n' >&2
-      if ! run_as_admin 'grok update'; then
+      if ! run_admin_cli grok update; then
         printf '[vpsbuddy] warning: Grok CLI update failed\n' >&2
         failures=$((failures + 1))
       fi
       ;;
     pi)
       printf '[vpsbuddy] updating Pi with pi update --self\n' >&2
-      if ! run_as_admin 'pi update --self'; then
+      if ! run_admin_cli pi update --self; then
         printf '[vpsbuddy] warning: Pi CLI update failed\n' >&2
         failures=$((failures + 1))
       fi
       ;;
     opencode)
       printf '[vpsbuddy] updating OpenCode with opencode upgrade\n' >&2
-      if ! run_as_admin 'opencode upgrade'; then
+      if ! run_admin_cli opencode upgrade; then
         printf '[vpsbuddy] warning: OpenCode CLI update failed\n' >&2
         failures=$((failures + 1))
       fi
       ;;
     amp)
       printf '[vpsbuddy] updating Amp with amp update\n' >&2
-      if ! run_as_admin 'amp update'; then
+      if ! run_admin_cli amp update; then
         printf '[vpsbuddy] warning: Amp CLI update failed\n' >&2
         failures=$((failures + 1))
       fi
       ;;
     droid)
       printf '[vpsbuddy] updating Factory Droid with droid update\n' >&2
-      if ! run_as_admin 'droid update'; then
+      if ! run_admin_cli droid update; then
         printf '[vpsbuddy] warning: Factory Droid update failed\n' >&2
         failures=$((failures + 1))
       fi
       ;;
     claude)
       printf '[vpsbuddy] updating Claude Code with claude update\n' >&2
-      if ! run_as_admin 'claude update'; then
+      if ! run_admin_cli claude update; then
         printf '[vpsbuddy] warning: Claude Code update failed\n' >&2
         failures=$((failures + 1))
       fi
@@ -2092,7 +2225,11 @@ print_selected_cli_versions() {
       droid) command_name=droid; output_key=DROID ;;
       claude) command_name=claude; output_key=CLAUDE ;;
     esac
-    version="$(run_as_admin "$home_dir" "$command_name --version" 2>/dev/null | head -n 1 || true)"
+    if [[ "$cli_id" == "github" ]]; then
+      version="$(run_as_admin "$home_dir" "$command_name --version" 2>/dev/null | head -n 1 || true)"
+    else
+      version="$(run_admin_cli "$home_dir" "$command_name" --version 2>/dev/null | head -n 1 || true)"
+    fi
     printf 'VPSBUDDY_%s_VERSION=%s\n' "$output_key" "$version"
   done
 }
