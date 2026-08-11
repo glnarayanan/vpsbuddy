@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '[orb setup] checking system packages\n'
+packages=(ca-certificates curl shellcheck)
+missing_packages=()
+for package in "${packages[@]}"; do
+  if ! dpkg-query -W -f='${db:Status-Abbrev}' "$package" 2> /dev/null | grep -q '^ii '; then
+    missing_packages+=("$package")
+  fi
+done
+
+if ((${#missing_packages[@]})); then
+  printf '[orb setup] installing: %s\n' "${missing_packages[*]}"
+  sudo apt-get update
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing_packages[@]}"
+else
+  printf '[orb setup] system packages already installed\n'
+fi
+
+shfmt_version='3.13.1'
+if ! command -v shfmt > /dev/null 2>&1 || [[ "$(shfmt --version)" != "v${shfmt_version}" ]]; then
+  case "$(uname -m)" in
+    x86_64)
+      shfmt_arch='amd64'
+      shfmt_sha256='fb096c5d1ac6beabbdbaa2874d025badb03ee07929f0c9ff67563ce8c75398b1'
+      ;;
+    aarch64 | arm64)
+      shfmt_arch='arm64'
+      shfmt_sha256='32d92acaa5cd8abb29fc49dac123dc412442d5713967819d8af2c29f1b3857c7'
+      ;;
+    *)
+      printf '[orb setup] unsupported architecture for shfmt: %s\n' "$(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+
+  printf '[orb setup] installing shfmt %s\n' "$shfmt_version"
+  shfmt_download="$(mktemp)"
+  trap 'rm -f "$shfmt_download"' EXIT
+  curl -fsSL --retry 3 \
+    "https://github.com/mvdan/sh/releases/download/v${shfmt_version}/shfmt_v${shfmt_version}_linux_${shfmt_arch}" \
+    -o "$shfmt_download"
+  printf '%s  %s\n' "$shfmt_sha256" "$shfmt_download" | sha256sum --check --status
+  sudo install -m 0755 "$shfmt_download" /usr/local/bin/shfmt
+  rm -f "$shfmt_download"
+  trap - EXIT
+else
+  printf '[orb setup] shfmt %s already installed\n' "$shfmt_version"
+fi
+
+printf '[orb setup] ready: shellcheck %s, shfmt %s\n' \
+  "$(shellcheck --version | awk '/^version:/ { print $2 }')" \
+  "$(shfmt --version)"
