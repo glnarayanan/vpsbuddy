@@ -14,7 +14,6 @@ reset_config() {
   VPS_SELECTED_CLIS_PRESENT=""
   VPS_AUTOMATIC_UPDATES=""
   VPS_FULL_SUDO=""
-  VPS_ENABLE_TAILSCALE_SSH=""
   VPS_DRY_RUN="0"
   VPS_RESUME="0"
   VPS_SHOW_HELP="0"
@@ -457,7 +456,6 @@ collect_configuration() {
   VPS_SELECTED_CLIS_PRESENT="1"
   VPS_AUTOMATIC_UPDATES="$(prompt_yes_no "Manage automatic OS updates with vpsbuddy")" || return 1
   VPS_FULL_SUDO="$(prompt_yes_no "Grant the admin user full passwordless sudo")" || return 1
-  VPS_ENABLE_TAILSCALE_SSH="0"
 }
 
 configuration_summary() {
@@ -550,7 +548,7 @@ save_resume_plan() {
   local plan
 
   printf -v plan '%s\n' \
-    'VPSBUDDY_PLAN_VERSION=1' \
+    'VPSBUDDY_PLAN_VERSION=2' \
     "$(printf 'saved_admin_user=%q' "$VPS_ADMIN_USER")" \
     "$(printf 'saved_public_key=%q' "$VPS_PUBLIC_KEY")" \
     "$(printf 'saved_hostname=%q' "$VPS_HOSTNAME")" \
@@ -561,8 +559,7 @@ save_resume_plan() {
     "$(printf 'saved_selected_clis=%q' "$VPS_SELECTED_CLIS")" \
     "$(printf 'saved_selected_clis_present=%q' "$VPS_SELECTED_CLIS_PRESENT")" \
     "$(printf 'saved_automatic_updates=%q' "$VPS_AUTOMATIC_UPDATES")" \
-    "$(printf 'saved_full_sudo=%q' "$VPS_FULL_SUDO")" \
-    "$(printf 'saved_enable_tailscale_ssh=%q' "$VPS_ENABLE_TAILSCALE_SSH")"
+    "$(printf 'saved_full_sudo=%q' "$VPS_FULL_SUDO")"
   write_private_state_file "$VPS_STATE_DIR/bootstrap-plan" "$plan"
 }
 
@@ -581,7 +578,6 @@ validate_loaded_resume_plan() {
   [[ "$VPS_WEB" == "0" || "$VPS_WEB" == "1" ]] || return 1
   [[ "$VPS_AUTOMATIC_UPDATES" == "0" || "$VPS_AUTOMATIC_UPDATES" == "1" ]] || return 1
   [[ "$VPS_FULL_SUDO" == "0" || "$VPS_FULL_SUDO" == "1" ]] || return 1
-  [[ "$VPS_ENABLE_TAILSCALE_SSH" == "0" || "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] || return 1
 }
 
 load_resume_plan() {
@@ -590,7 +586,7 @@ load_resume_plan() {
   local saved_admin_user="" saved_public_key="" saved_hostname=""
   local saved_swap_enabled="" saved_swap_size="" saved_swap_action=""
   local saved_web="" saved_selected_clis="" saved_selected_clis_present=""
-  local saved_automatic_updates="" saved_full_sudo="" saved_enable_tailscale_ssh=""
+  local saved_automatic_updates="" saved_full_sudo=""
 
   if ! state_path_is_private "$VPS_STATE_DIR" directory ||
     ! state_path_is_private "$plan" file; then
@@ -601,7 +597,7 @@ load_resume_plan() {
   # written with shell escaping by save_resume_plan.
   # shellcheck disable=SC1090
   source "$plan"
-  [[ "$VPSBUDDY_PLAN_VERSION" == "1" ]] || return 1
+  [[ "$VPSBUDDY_PLAN_VERSION" == "2" ]] || return 1
 
   VPS_ADMIN_USER="$saved_admin_user"
   VPS_PUBLIC_KEY="$saved_public_key"
@@ -614,12 +610,7 @@ load_resume_plan() {
   VPS_SELECTED_CLIS_PRESENT="$saved_selected_clis_present"
   VPS_AUTOMATIC_UPDATES="$saved_automatic_updates"
   VPS_FULL_SUDO="$saved_full_sudo"
-  VPS_ENABLE_TAILSCALE_SSH="$saved_enable_tailscale_ssh"
-  validate_loaded_resume_plan || return 1
-  if [[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]]; then
-    warn "the saved Tailscale SSH choice is retired; an incomplete setup will use OpenSSH over the Tailnet"
-    VPS_ENABLE_TAILSCALE_SSH="0"
-  fi
+  validate_loaded_resume_plan
 }
 
 write_bootstrap_status() {

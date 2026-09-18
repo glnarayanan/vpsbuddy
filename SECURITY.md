@@ -7,7 +7,6 @@ on fresh VPS hosts. Please report security issues privately first.
 
 | Version           | Status                                                        |
 | ----------------- | ------------------------------------------------------------- |
-| `v0.1.0-alpha`    | Security reports accepted. Breaking changes may still occur.  |
 | Unreleased `main` | Security reports accepted. Use with review and smoke testing. |
 
 ## Report a Vulnerability
@@ -52,8 +51,7 @@ Out of scope:
 ## Disclosure Expectations
 
 The maintainer will aim to acknowledge valid reports promptly, triage severity,
-prepare a fix, and document release notes. Alpha releases do not yet have a
-formal SLA.
+prepare a fix, and document release notes. There is no formal response SLA.
 
 Public disclosure should wait until a fix or mitigation is available, unless the
 issue is already being actively exploited or is already public.

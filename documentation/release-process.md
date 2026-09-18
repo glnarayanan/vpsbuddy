@@ -29,7 +29,9 @@ After hardening, as the admin user:
 sudo -n /usr/local/sbin/vpsbuddy-sudo-check
 swapon --show
 systemctl list-timers | grep -E 'vpsbuddy-(os|cli)-update'
-sudo sshd -T | grep -E 'passwordauthentication|kbdinteractiveauthentication|permitrootlogin'
+sudo sshd -T -C "user=root,host=$(hostname),addr=127.0.0.1" | grep '^permitrootlogin '
+sudo sshd -T -C "user=$(id -un),host=$(hostname),addr=127.0.0.1" |
+  grep -E '^(passwordauthentication|kbdinteractiveauthentication) '
 sudo ufw status verbose 2>/dev/null || sudo firewall-cmd --list-all
 ```
 
@@ -46,32 +48,5 @@ TCP 80/443 match the setup choice; swap, selected CLIs, and selected timers
 match; no CLI update timer exists for `none` or GitHub CLI alone; helper use
 appends to `/var/log/vpsbuddy-actions.log`.
 
-Test at least Ubuntu before an alpha tag. Record the provider image in the
-release notes.
-
-## Rename Migration Smoke Test
-
-On a second disposable VPS, run the last `vps-bootstrap` release with one admin
-name. Then run the current `vpsbuddy` installer and choose a different admin
-name. Keep the provider console open throughout the test.
-
-After the rerun, check that no old privileged state remains:
-
-```bash
-sudo bash -c '! compgen -G "/etc/sudoers.d/90-vps-bootstrap-*" >/dev/null'
-sudo test ! -e /usr/local/sbin/vps-agent-deploy
-sudo test ! -e /etc/systemd/system/vps-os-update.timer
-sudo test ! -e /etc/systemd/system/vps-agent-cli-update.timer
-sudo test ! -e /etc/ssh/sshd_config.d/00-vps-bootstrap-hardening.conf
-```
-
-Confirm that the new admin still passes the Tailnet login and sudo helper checks.
-
-## Tag
-
-```bash
-git tag -a v0.1.0-alpha -m "v0.1.0-alpha"
-git push origin v0.1.0-alpha
-```
-
-Do not tag a dirty or unreviewed tree.
+Test at least Ubuntu before a release. Record the provider image in the release
+notes.

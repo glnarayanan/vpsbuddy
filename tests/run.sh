@@ -141,7 +141,6 @@ test_generated_selected_cli_behavior() {
     admin_user=deploy
     public_key="$1"
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -164,7 +163,6 @@ test_generated_selected_cli_behavior() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=github
     selected_clis_present=1
@@ -187,7 +185,6 @@ test_generated_selected_cli_behavior() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis="codex github"
     selected_clis_present=1
@@ -221,7 +218,6 @@ test_generated_missing_cli_selection_state() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     automatic_updates=0
@@ -242,7 +238,6 @@ test_generated_missing_cli_selection_state() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis_present=1
     automatic_updates=0
@@ -278,7 +273,6 @@ test_generated_installer_failure_is_not_masked() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=grok
     selected_clis_present=1
@@ -322,7 +316,6 @@ test_generated_cli_installers_have_a_deadline() {
       admin_user=deploy
       public_key=ssh-ed25519
       requested_hostname=
-      enable_tailscale_ssh=0
       web_enabled=1
       selected_clis=codex
       selected_clis_present=1
@@ -368,7 +361,6 @@ test_generated_cli_link_cleanup() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -399,7 +391,6 @@ test_generated_cli_link_cleanup() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -436,7 +427,6 @@ test_generated_cli_link_cleanup() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -483,7 +473,6 @@ test_generated_cli_link_safety() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -512,7 +501,6 @@ test_generated_cli_link_safety() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -544,7 +532,6 @@ test_generated_cli_link_safety() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -574,7 +561,6 @@ test_generated_cli_link_safety() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=
     selected_clis_present=1
@@ -616,7 +602,6 @@ test_successful_rerun_deselects_managed_cli() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=grok
     selected_clis_present=1
@@ -749,7 +734,6 @@ GPG
       admin_user=deploy
       public_key=ssh-ed25519
       requested_hostname=
-      enable_tailscale_ssh=0
       web_enabled=1
       selected_clis=github
       selected_clis_present=1
@@ -903,7 +887,6 @@ CURL
       admin_user=deploy
       public_key=ssh-ed25519
       requested_hostname=
-      enable_tailscale_ssh=0
       web_enabled=1
       selected_clis=github
       selected_clis_present=1
@@ -1014,7 +997,6 @@ FAKE_CURL
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis="codex grok github pi opencode amp droid claude"
     selected_clis_present=1
@@ -1118,7 +1100,6 @@ test_generated_cli_candidate_paths() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis="codex amp"
     selected_clis_present=1
@@ -1199,7 +1180,6 @@ CURL
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=droid
     selected_clis_present=1
@@ -1326,7 +1306,6 @@ FAKE_SUDO
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis="pi grok"
     selected_clis_present=1
@@ -1407,7 +1386,6 @@ FAKE_SUDO
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=grok
     selected_clis_present=1
@@ -1474,7 +1452,6 @@ FAKE_SUDO
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=grok
     selected_clis_present=1
@@ -1533,7 +1510,6 @@ FAKE_CLI
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis="codex grok github pi opencode amp droid claude"
     selected_clis_present=1
@@ -1884,7 +1860,6 @@ yes"
           admin_user="$VPS_ADMIN_USER"
           public_key="$VPS_PUBLIC_KEY"
           requested_hostname="$VPS_HOSTNAME"
-          enable_tailscale_ssh="$VPS_ENABLE_TAILSCALE_SSH"
           web_enabled="$VPS_WEB"
           selected_clis="$VPS_SELECTED_CLIS"
           selected_clis_present="$VPS_SELECTED_CLIS_PRESENT"
@@ -2041,7 +2016,6 @@ test_resume_plan_round_trip() {
   VPS_SELECTED_CLIS_PRESENT="1"
   VPS_AUTOMATIC_UPDATES="1"
   VPS_FULL_SUDO="0"
-  VPS_ENABLE_TAILSCALE_SSH="0"
 
   save_resume_plan
   write_bootstrap_status prepared
@@ -2053,7 +2027,6 @@ test_resume_plan_round_trip() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=0
     selected_clis=
     selected_clis_present=1
@@ -2081,14 +2054,16 @@ test_resume_plan_round_trip() {
   assert_eq "resume plan is private" "600" "$(state_file_mode "$state_dir/bootstrap-plan")"
   assert_eq "resume state directory is private" "700" "$(state_file_mode "$state_dir")"
   assert_eq "CLI link manifest is private" "600" "$(state_file_mode "$state_dir/cli-links")"
-  VPS_ENABLE_TAILSCALE_SSH="1"
-  save_resume_plan
+  sed 's/VPSBUDDY_PLAN_VERSION=2/VPSBUDDY_PLAN_VERSION=1/' \
+    "$state_dir/bootstrap-plan" > "$state_dir/bootstrap-plan.tmp"
+  chmod 600 "$state_dir/bootstrap-plan.tmp"
+  mv "$state_dir/bootstrap-plan.tmp" "$state_dir/bootstrap-plan"
   reset_config
   VPS_STATE_DIR="$state_dir"
   if load_resume_plan; then
-    assert_eq "legacy Tailscale SSH choice is retired on resume" "0" "$VPS_ENABLE_TAILSCALE_SSH"
+    fail "resume rejects obsolete plan format"
   else
-    fail "resume loads a trusted legacy Tailscale SSH plan"
+    pass "resume rejects obsolete plan format"
   fi
   rm -rf "$server_fixture" "$state_dir"
 }
@@ -2110,7 +2085,6 @@ test_resume_rejects_untrusted_state() {
   VPS_SELECTED_CLIS_PRESENT=1
   VPS_AUTOMATIC_UPDATES=0
   VPS_FULL_SUDO=0
-  VPS_ENABLE_TAILSCALE_SSH=0
   save_resume_plan
 
   chmod 0666 "$state_dir/bootstrap-plan"
@@ -2155,7 +2129,6 @@ test_cli_management_failure_does_not_abort_prepare() {
     admin_user=deploy
     public_key=ssh-ed25519
     requested_hostname=
-    enable_tailscale_ssh=0
     web_enabled=1
     selected_clis=grok
     selected_clis_present=1
@@ -2204,7 +2177,6 @@ run_saved_resume_phase() {
       VPS_SELECTED_CLIS_PRESENT=1
       VPS_AUTOMATIC_UPDATES=0
       VPS_FULL_SUDO=0
-      VPS_ENABLE_TAILSCALE_SSH=0
       save_resume_plan
       write_bootstrap_status "$1"
 
@@ -2278,7 +2250,6 @@ test_resume_without_saved_plan_starts_guided_recovery() {
         VPS_SELECTED_CLIS_PRESENT=1
         VPS_AUTOMATIC_UPDATES=0
         VPS_FULL_SUDO=0
-        VPS_ENABLE_TAILSCALE_SSH=0
       }
       configuration_summary() { :; }
       require_vps_root() { :; }
@@ -2421,6 +2392,8 @@ test_generated_server_phase_keeps_security_controls() {
   assert_contains "hardening writes SSH policy" "$server_script" 'write_sshd_hardening'
   assert_contains "hardening uses the first SSH drop-in" "$server_script" '00-vpsbuddy-hardening.conf'
   assert_contains "hardening checks effective SSH settings" "$server_script" 'validate_effective_sshd_hardening'
+  assert_contains "hardening blocks root SSH login" "$server_script" 'PermitRootLogin no'
+  assert_contains "hardening verifies the effective root setting" "$server_script" 'grep -qxF "permitrootlogin no"'
   assert_contains "hardening writes sudo policy" "$server_script" "write_sudoers_policy \"\$full_sudo\""
   assert_contains "developer CLI setup remains" "$server_script" 'install_selected_clis'
   assert_contains "selected developer CLI failure does not stop hardening" "$server_script" 'continuing to Tailnet verification and SSH hardening'
@@ -2482,7 +2455,6 @@ test_server_config_prelude_carries_every_choice() {
   VPS_ADMIN_USER="ops"
   VPS_PUBLIC_KEY="$(cat tests/fixtures/id_ed25519.pub)"
   VPS_HOSTNAME="apps-1"
-  VPS_ENABLE_TAILSCALE_SSH="0"
   VPS_WEB="1"
   VPS_SELECTED_CLIS="codex github claude"
   VPS_SELECTED_CLIS_PRESENT="1"
