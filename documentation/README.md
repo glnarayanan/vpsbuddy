@@ -107,11 +107,13 @@ curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.s
   bash -s -- --resume
 ```
 
-`--continue` is an alias. A saved `prepared` or `hardening` phase skips
-prepare, rechecks the admin sudo helper and Tailscale, and waits for Tailnet
-login approval before hardening. A saved `complete` phase reports the final
-state without changing the server. If a partial install predates saved plans,
-resume starts the guided setup and saves the choices before changing the VPS.
+`--continue` is an alias. A saved `prepared` or `hardening` phase skips full
+package and user setup, temporarily restores public SSH, disables Tailscale
+SSH, rechecks the admin sudo helper and Tailscale, and waits for Tailnet login
+approval before hardening. A saved `complete` phase reports the final
+state without changing the server. If no trusted current plan exists, including
+when a saved plan has an older format, resume starts the guided setup and saves
+the new choices before changing the VPS.
 
 The first rerun after the rename retires files owned by `vps-bootstrap`: helper
 commands, sudoers policy, timers, update files, and SSH drop-ins. SSH changes

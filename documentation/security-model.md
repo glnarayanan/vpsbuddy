@@ -122,15 +122,13 @@ Guided key discovery resolves the invoking account by numeric ID from
 regular file. Other account or key sources fall back to a pasted public key
 instead of blocking recovery.
 
-## Tailscale SSH
+## Tailnet SSH
 
 OpenSSH over the Tailnet is the supported SSH path. Prepare disables Tailscale
 SSH, which otherwise intercepts Tailnet port 22 and requires separate Tailnet
 SSH policy rules. The operator tests a fresh OpenSSH login before hardening.
-Saved plans that selected Tailscale SSH are read for compatibility, but that
-choice is retired. Resuming an incomplete setup disables Tailscale SSH before
-the login test. A completed host must be repaired from an existing root session
-before verifying a fresh login.
+Resume accepts only the current plan format; an older plan starts a new guided
+setup rather than restoring retired SSH choices.
 
 ## Provider Firewall
 
