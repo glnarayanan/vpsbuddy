@@ -44,7 +44,7 @@ Run this command after logging into the VPS. The guided setup asks for:
   - selected developer CLI installation
   - automatic OS updates
   - scoped or full passwordless sudo
-  - optional Tailscale SSH
+  - OpenSSH over the Tailnet
 
 Options:
   --dry-run          Collect and print the configuration without changing the server.
@@ -457,9 +457,7 @@ collect_configuration() {
   VPS_SELECTED_CLIS_PRESENT="1"
   VPS_AUTOMATIC_UPDATES="$(prompt_yes_no "Manage automatic OS updates with vpsbuddy")" || return 1
   VPS_FULL_SUDO="$(prompt_yes_no "Grant the admin user full passwordless sudo")" || return 1
-  VPS_ENABLE_TAILSCALE_SSH="$(
-    prompt_yes_no "Enable Tailscale SSH (only if Tailnet SSH ACL rules are ready)"
-  )" || return 1
+  VPS_ENABLE_TAILSCALE_SSH="0"
 }
 
 configuration_summary() {
@@ -474,7 +472,7 @@ Configuration:
   Developer CLIs: $([[ -n "$VPS_SELECTED_CLIS" ]] && selected_cli_names "$VPS_SELECTED_CLIS" || printf 'none')
   Automatic OS updates: $([[ "$VPS_AUTOMATIC_UPDATES" == "1" ]] && printf 'enable' || printf 'disable bootstrap timer')
   Sudo policy: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless sudo' || printf 'scoped helpers')
-  Tailscale SSH: $([[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]] && printf 'enabled' || printf 'disabled')
+  Tailnet SSH: OpenSSH (Tailscale SSH disabled)
 SUMMARY
 }
 
@@ -617,7 +615,11 @@ load_resume_plan() {
   VPS_AUTOMATIC_UPDATES="$saved_automatic_updates"
   VPS_FULL_SUDO="$saved_full_sudo"
   VPS_ENABLE_TAILSCALE_SSH="$saved_enable_tailscale_ssh"
-  validate_loaded_resume_plan
+  validate_loaded_resume_plan || return 1
+  if [[ "$VPS_ENABLE_TAILSCALE_SSH" == "1" ]]; then
+    warn "the saved Tailscale SSH choice is retired; an incomplete setup will use OpenSSH over the Tailnet"
+    VPS_ENABLE_TAILSCALE_SSH="0"
+  fi
 }
 
 write_bootstrap_status() {
@@ -668,7 +670,6 @@ set -Eeuo pipefail
 : "${admin_user:?admin user required}"
 : "${public_key:?public key required}"
 requested_hostname="${requested_hostname:-}"
-: "${enable_tailscale_ssh:?Tailscale SSH choice required}"
 : "${web_enabled:?web port choice required}"
 selected_clis_present="${selected_clis_present-}"
 selected_clis_value_present=0
@@ -2570,19 +2571,6 @@ disable_tailscale_ssh_for_verification() {
   fi
 }
 
-enable_tailscale_ssh_if_requested() {
-  if [[ "$enable_tailscale_ssh" != "1" ]]; then
-    return 0
-  fi
-
-  log "enabling Tailscale SSH on this node"
-  if ! tailscale set --ssh; then
-    fail "Tailscale SSH enable failed; OpenSSH over the Tailnet remains available"
-  fi
-
-  warn "Tailscale SSH also requires matching Tailnet ACL SSH rules"
-}
-
 configure_ufw() {
   local firewall_phase="$1"
 
@@ -2783,8 +2771,8 @@ run_prepare() {
   install_agent_sudo_helpers
   set_requested_hostname
   ensure_tailscale_connected
-  disable_tailscale_ssh_for_verification
   configure_firewall prepare
+  disable_tailscale_ssh_for_verification
   validate_prepare_state
   install_selected_clis
 
@@ -2792,6 +2780,15 @@ run_prepare() {
   printf 'VPSBUDDY_FIREWALL=%s\n' "$FIREWALL_BACKEND"
   printf 'VPSBUDDY_SWAP=%s\n' "$([[ "$swap_enabled" == "1" ]] && printf 'enabled' || printf 'disabled')"
   log "prepare phase complete; public SSH remains available until you verify the Tailnet admin login"
+}
+
+run_prepare_access() {
+  require_root
+  select_platform
+  ensure_tailscale_connected
+  configure_firewall prepare
+  disable_tailscale_ssh_for_verification
+  log "public SSH is available while you verify OpenSSH over the Tailnet"
 }
 
 run_harden() {
@@ -2805,7 +2802,6 @@ run_harden() {
   write_sshd_hardening
   write_sudoers_policy "$full_sudo"
   configure_firewall harden
-  enable_tailscale_ssh_if_requested
 
   printf 'VPSBUDDY_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
   printf 'VPSBUDDY_FIREWALL=%s\n' "$FIREWALL_BACKEND"
@@ -2815,6 +2811,9 @@ run_harden() {
 case "$phase" in
   prepare)
     run_prepare
+    ;;
+  prepare_access)
+    run_prepare_access
     ;;
   harden)
     run_harden
@@ -2833,7 +2832,6 @@ generate_server_config_prelude() {
   printf 'admin_user=%q\n' "$VPS_ADMIN_USER"
   printf 'public_key=%q\n' "$VPS_PUBLIC_KEY"
   printf 'requested_hostname=%q\n' "$VPS_HOSTNAME"
-  printf 'enable_tailscale_ssh=%q\n' "$VPS_ENABLE_TAILSCALE_SSH"
   printf 'web_enabled=%q\n' "$VPS_WEB"
   printf 'selected_clis_present=%q\n' "$VPS_SELECTED_CLIS_PRESENT"
   printf 'selected_clis=%q\n' "$VPS_SELECTED_CLIS"
@@ -2882,6 +2880,7 @@ confirm_tailnet_login() {
   cat >&2 << PROMPT
 
 [vpsbuddy] Prepare is complete. Public SSH is still open.
+[vpsbuddy] Tailnet port 22 is using OpenSSH; Tailscale SSH is disabled.
 [vpsbuddy] From another terminal on a device in your Tailnet, run:
 [vpsbuddy]   ssh $VPS_ADMIN_USER@$tailnet_ip
 [vpsbuddy] Keep this session open until that login works.
@@ -3026,7 +3025,8 @@ run_bootstrap() {
     run_server_phase prepare || return 1
     write_bootstrap_status prepared || return 1
   else
-    printf '[vpsbuddy] Prepare was already complete; checking the saved admin and Tailnet state.\n'
+    printf '[vpsbuddy] Prepare was already complete; restoring public SSH and the selected Tailnet SSH mode for verification.\n'
+    run_server_phase prepare_access || return 1
   fi
   read_failed_cli_state
 

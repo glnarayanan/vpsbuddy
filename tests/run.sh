@@ -1663,7 +1663,7 @@ test_guided_dry_run_captures_operator_configuration() {
   assert_contains "dry-run captures developer CLI choice" "$output" "Developer CLIs: Codex GitHub CLI Claude Code"
   assert_contains "dry-run captures update choice" "$output" "Automatic OS updates: enable"
   assert_contains "dry-run captures scoped sudo choice" "$output" "Sudo policy: scoped helpers"
-  assert_contains "dry-run captures Tailscale SSH choice" "$output" "Tailscale SSH: disabled"
+  assert_contains "dry-run selects OpenSSH over the Tailnet" "$output" "Tailnet SSH: OpenSSH (Tailscale SSH disabled)"
   assert_contains "dry-run does not mutate server" "$output" "Dry run complete; no server changes were made."
 }
 
@@ -1803,7 +1803,6 @@ no
 none
 no
 no
-no
 yes
 ${TEST_CONFIRMATION}"
     VPS_INPUT_FD=3
@@ -1858,7 +1857,6 @@ yes
 none
 no
 2
-no
 no
 no
 yes
@@ -2083,6 +2081,15 @@ test_resume_plan_round_trip() {
   assert_eq "resume plan is private" "600" "$(state_file_mode "$state_dir/bootstrap-plan")"
   assert_eq "resume state directory is private" "700" "$(state_file_mode "$state_dir")"
   assert_eq "CLI link manifest is private" "600" "$(state_file_mode "$state_dir/cli-links")"
+  VPS_ENABLE_TAILSCALE_SSH="1"
+  save_resume_plan
+  reset_config
+  VPS_STATE_DIR="$state_dir"
+  if load_resume_plan; then
+    assert_eq "legacy Tailscale SSH choice is retired on resume" "0" "$VPS_ENABLE_TAILSCALE_SSH"
+  else
+    fail "resume loads a trusted legacy Tailscale SSH plan"
+  fi
   rm -rf "$server_fixture" "$state_dir"
 }
 
@@ -2223,7 +2230,8 @@ test_prepared_resume_skips_prepare_and_hardens() {
 
   output="$(run_saved_resume_phase prepared)"
 
-  assert_not_contains "prepared resume does not repeat prepare" "$output" "phase:prepare"
+  assert_not_contains "prepared resume does not repeat full prepare" "$output" $'phase:prepare\n'
+  assert_order "prepared resume reapplies the SSH mode before hardening" "$output" "phase:prepare_access" "phase:harden"
   assert_contains "prepared resume still runs hardening" "$output" "phase:harden"
   assert_contains "prepared resume completes" "$output" "summary:100.64.0.10"
   assert_contains "prepared resume records completion" "$output" "saved-status:complete"
@@ -2237,7 +2245,8 @@ test_other_resume_phases_follow_safe_boundaries() {
   assert_contains "preparing resume records completion" "$preparing_output" "saved-status:complete"
 
   hardening_output="$(run_saved_resume_phase hardening)"
-  assert_not_contains "hardening resume does not repeat prepare" "$hardening_output" "phase:prepare"
+  assert_not_contains "hardening resume does not repeat full prepare" "$hardening_output" $'phase:prepare\n'
+  assert_order "hardening resume reapplies the SSH mode before hardening" "$hardening_output" "phase:prepare_access" "phase:harden"
   assert_contains "hardening resume safely repeats hardening" "$hardening_output" "phase:harden"
   assert_contains "hardening resume records completion" "$hardening_output" "saved-status:complete"
 
@@ -2438,7 +2447,8 @@ test_generated_server_phase_keeps_security_controls() {
     "could not clean old managed developer CLI links; continuing with VPS setup"
   assert_contains "root admin is rejected on the server" "$server_script" 'root cannot be the managed admin user'
   assert_contains "UID 0 aliases are rejected" "$server_script" 'managed admin user must not have UID 0'
-  assert_contains "prepare disables existing Tailscale SSH" "$server_script" 'tailscale set --ssh=false'
+  assert_contains "bootstrap disables existing Tailscale SSH" "$server_script" 'tailscale set --ssh=false'
+  assert_not_contains "bootstrap never enables Tailscale SSH" "$server_script" 'tailscale set --ssh;'
   assert_not_contains "generic agent symlink is not created" "$server_script" "ln -sf \"\$home_dir/.grok/bin/agent\" /usr/local/bin/agent"
   assert_contains "managed generic agent symlink is retired" "$server_script" "[[ \"\$link_target\" == \"\$home_dir/.grok/bin/agent\" ]]"
   assert_order \
@@ -2447,10 +2457,23 @@ test_generated_server_phase_keeps_security_controls() {
     'write_sshd_hardening' \
     'configure_firewall harden'
   assert_order \
-    "Tailscale SSH is disabled before prepare firewall" \
+    "prepare opens public SSH before disabling Tailscale SSH" \
+    "$(printf '%s\n' "$server_script" | sed -n '/^run_prepare() {/,/^}/p')" \
+    'configure_firewall prepare' \
+    'disable_tailscale_ssh_for_verification'
+  assert_order \
+    "resume restores public SSH before disabling Tailscale SSH" \
+    "$(printf '%s\n' "$server_script" | sed -n '/^run_prepare_access() {/,/^}/p')" \
+    'configure_firewall prepare' \
+    'disable_tailscale_ssh_for_verification'
+  assert_order \
+    "Tailscale SSH is disabled before hardening" \
     "$server_script" \
     'disable_tailscale_ssh_for_verification' \
-    'configure_firewall prepare'
+    'write_sshd_hardening'
+  assert_not_contains "hardening does not change Tailscale SSH after login test" \
+    "$(printf '%s\n' "$server_script" | sed -n '/^run_harden() {/,/^}/p')" \
+    'tailscale set --ssh'
 }
 
 test_server_config_prelude_carries_every_choice() {

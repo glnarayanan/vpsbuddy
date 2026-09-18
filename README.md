@@ -40,8 +40,8 @@ curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.s
 The installer asks for every operator choice: admin user, SSH public key,
 optional hostname, swap, public web ports, a numbered developer CLI selection
 (Codex, Grok, GitHub CLI, Pi, OpenCode, Amp, Factory Droid, or Claude Code),
-automatic OS updates, scoped or full passwordless sudo, and optional Tailscale
-SSH. Blank CLI input is rejected; use `all` or `none` when that is clearer.
+automatic OS updates, and scoped or full passwordless sudo. Blank CLI input is
+rejected; use `all` or `none` when that is clearer.
 There is no default admin name or swap size. Active swap is left unchanged.
 
 User-scoped upstream CLI installers run as the chosen admin user. GitHub CLI and required OS packages are installed as root through the supported apt, dnf, or yum package manager. GitHub CLI is accepted only from its signed official repository.
@@ -49,9 +49,10 @@ User-scoped upstream CLI installers run as the chosen admin user. GitHub CLI and
 ## Safe Hardening Flow
 
 1. Prepare the user, key, packages, Tailscale, swap, helpers, and firewall while
-   public SSH stays open.
+   public SSH stays open. Disable Tailscale SSH so OpenSSH handles Tailnet port 22.
 2. Check the new admin user's sudo helper on the server.
-3. Wait while you test `ssh <admin>@<tailscale-ip>` from another terminal.
+3. Wait while you test a fresh `ssh <admin>@<tailscale-ip>` login from another
+   terminal through OpenSSH.
 4. Harden SSH and remove public TCP 22 only after you type `yes`.
 
 If core preparation, the sudo check, or your Tailnet login test fails, public

@@ -34,19 +34,21 @@ entry to `/etc/fstab`.
 ## Prepare and Harden
 
 Prepare checks or updates the chosen user, key, packages, swap, services,
-Tailscale, helpers, CLIs, and firewall rules while keeping public SSH open.
+Tailscale, helpers, CLIs, and firewall rules while keeping public SSH open. It
+disables Tailscale SSH before the OpenSSH login test.
 
 After prepare, the script runs the scoped sudo check as the new admin user,
 prints the Tailnet SSH command, and waits. Test that login from another
 terminal, return to the first session, and type `yes`.
 
 Harden then writes and validates OpenSSH hardening, writes the chosen sudo
-policy, limits SSH to `tailscale0`, applies public web rules, and optionally
-enables Tailscale SSH.
+policy, limits SSH to `tailscale0`, and applies public web rules. OpenSSH remains
+the Tailnet port 22 service.
 
 If you do not confirm, setup pauses with public SSH open. Rerun with
-`--resume`; vpsbuddy loads the saved choices, checks the admin and Tailnet
-state again, and waits for a new explicit confirmation before hardening.
+`--resume`; vpsbuddy loads the saved choices, restores public SSH, disables
+Tailscale SSH, checks the admin and Tailnet state again, and waits
+for a new explicit confirmation before hardening.
 
 ## Developer CLIs
 
