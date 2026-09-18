@@ -15,7 +15,7 @@ from a reviewed checkout.
 ## Explicit Configuration
 
 The guided setup asks for the admin user, public key, hostname choice, swap,
-web ports, developer CLIs, automatic updates, sudo policy, and Tailscale SSH.
+web ports, developer CLIs, automatic updates, and sudo policy.
 It prints a summary and asks before changing the host. No admin name or swap
 size is assumed. Existing active swap is kept.
 
@@ -25,7 +25,8 @@ Prepare installs packages, creates or reuses the admin user and public key,
 writes the selected sudo policy, installs root-owned helpers and audit logging,
 sets up swap when requested, joins Tailscale, installs selected developer CLIs,
 sets selected update timers, and enables the host firewall while keeping public
-SSH open.
+SSH open. It disables Tailscale SSH before the operator tests a fresh OpenSSH
+login, so that test uses the final SSH path.
 Prepare also retires known files from the old `vps-bootstrap` name. It removes
 only fixed installer paths. It keeps the old audit log and removes the generic
 agent link only when that link points to the old managed Grok binary.
@@ -123,8 +124,13 @@ instead of blocking recovery.
 
 ## Tailscale SSH
 
-OpenSSH over the Tailnet is the base path. Tailscale SSH is optional and should
-be selected only after Tailnet SSH ACL rules are ready.
+OpenSSH over the Tailnet is the supported SSH path. Prepare disables Tailscale
+SSH, which otherwise intercepts Tailnet port 22 and requires separate Tailnet
+SSH policy rules. The operator tests a fresh OpenSSH login before hardening.
+Saved plans that selected Tailscale SSH are read for compatibility, but that
+choice is retired. Resuming an incomplete setup disables Tailscale SSH before
+the login test. A completed host must be repaired from an existing root session
+before verifying a fresh login.
 
 ## Provider Firewall
 
