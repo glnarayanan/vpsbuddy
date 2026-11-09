@@ -2350,6 +2350,13 @@ test_checkout_free_installer_executes_downloaded_bundle() {
         cp "$TEST_REPO_ROOT/lib/vpsbuddy.sh" "$bundle_dir/repository/lib/vpsbuddy.sh"
         cp "$TEST_REPO_ROOT/lib/templates/vpsbuddy-audit-prelude.sh" "$bundle_dir/repository/lib/templates/vpsbuddy-audit-prelude.sh"
         cp "$TEST_REPO_ROOT/lib/templates/vpsbuddy-auth.sh" "$bundle_dir/repository/lib/templates/vpsbuddy-auth.sh"
+        # Keep guided answers independent of accounts and keys on the test host.
+        # Account/key discovery has separate fixture-based coverage.
+        cat >> "$bundle_dir/repository/lib/vpsbuddy.sh" << "TEST_DISCOVERY"
+discover_admin_users() { :; }
+detect_admin_public_key() { return 1; }
+detect_existing_public_key() { return 1; }
+TEST_DISCOVERY
         tar -czf "$archive_path" -C "$bundle_dir" repository
         rm -rf "$bundle_dir"
       }
