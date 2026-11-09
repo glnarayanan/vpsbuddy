@@ -56,7 +56,10 @@ not stop the Tailnet check or an operator-approved harden phase.
 Scoped sudo allows only root-owned `vpsbuddy-*` helpers. The helpers themselves
 can install packages, manage services, and change firewall web rules; they are
 not a least-privilege package or unit allowlist. Full passwordless sudo is
-applied only when chosen.
+applied by vpsbuddy only when chosen. Existing provider sudoers files and group
+grants are preserved and displayed; selecting scoped helpers does not revoke
+those grants. Prepare verifies helper access and also probes passwordless
+`/usr/bin/true` for the full-sudo choice.
 
 Each helper writes a best-effort JSONL event to
 `/var/log/vpsbuddy-actions.log`. A logging error does not replace the helper's
@@ -129,6 +132,17 @@ SSH, which otherwise intercepts Tailnet port 22 and requires separate Tailnet
 SSH policy rules. The operator tests a fresh OpenSSH login before hardening.
 Resume accepts only the current plan format; an older plan starts a new guided
 setup rather than restoring retired SSH choices.
+
+## Optional User Tooling
+
+`--dev-tools` runs separately as the logged-in non-root admin after bootstrap.
+It does not load root's saved plan or run host hardening. It verifies access to
+the installed sudo helper, and uses the existing package helper for Ruby build
+dependencies. Mise, runtimes, npm, and gems install as that user. The official
+mutable mise installer and upstream runtime/gem downloads are trust boundaries.
+The command reuses `~/.local/bin/mise` when present, collects explicit versions,
+and requires confirmation before installing. Reruns use mise's installed state;
+they do not create an additional root resume plan or remove tools.
 
 ## Provider Firewall
 

@@ -16,6 +16,11 @@ installed. CI runs the same command in its formatter job.
   forms, including blank, malformed, mixed-token, range, duplicate, and
   canonical-order cases
 - detection and fingerprinting of a valid SSH public key
+- provider-admin discovery, reuse or new-account choice, selected-account key
+  discovery, primary-group handling, key/comment preservation, and symlink refusal
+- optional user tools: selection, dependency expansion, version summary, root and
+  resume rejection, helper-access failure, mise reuse, npm verification, runtime
+  failure propagation, and idempotent shell activation (installers are stubbed)
 - checkout-free installer download and execution
 - generated server-script syntax and security-control order
 - swap symlink refusal

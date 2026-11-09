@@ -20,6 +20,11 @@
 
 ### Added
 
+- Discovery and explicit reuse of provider-created admins, with selected-account
+  key discovery, passwordless sudo probing, and reporting of root SSH/password
+  state and inherited sudo grants.
+- Separate non-root `--dev-tools` flow for mise, Ruby, Rails, and Node.js/npm,
+  with explicit versions, dry-run, confirmation, and retry through mise's state.
 - Guided bootstrap run directly on the VPS.
 - Checkout-free `install.sh` download entrypoint.
 - Prompts for admin user, public key, hostname, swap, web ports, developer CLIs,

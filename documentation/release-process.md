@@ -50,3 +50,15 @@ appends to `/var/log/vpsbuddy-actions.log`.
 
 Test at least Ubuntu before a release. Record the provider image in the release
 notes.
+
+Include an OVH-style image with a pre-created `ubuntu` admin: test both accepting
+that user and declining it to create another. Confirm provider key comments and
+sudo grants are retained, the helper works without a password, and full sudo
+works when selected. Check the reported root SSH policy and password status.
+
+After hardening, run `bin/vpsbuddy --dev-tools --dry-run`, then `--dev-tools`
+from the selected admin session. Install Ruby/Rails and Node/npm, open a fresh
+shell, check `mise --version`, `ruby --version`, `rails --version`, `node --version`,
+and `npm --version`, and repeat the selection. Confirm user ownership, no duplicate
+activation line, and unchanged SSH/firewall policy. Test a failed optional install
+and retry. Use the download entrypoint instead of `bin/vpsbuddy` without a checkout.
