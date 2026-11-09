@@ -1,6 +1,6 @@
 # vpsbuddy
 
-`vpsbuddy` prepares a fresh VPS after you have logged into it. It creates an
+`vpsbuddy` prepares a fresh VPS after you have logged into it. It creates or reuses an
 admin user, installs the chosen SSH key, joins Tailscale, sets up swap, hardens
 SSH, sets firewall rules, and can install developer CLIs.
 
@@ -21,6 +21,10 @@ Run the guided installer on the VPS:
 curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh | bash
 ```
 
+If your provider supplies an admin such as OVH's `ubuntu`, log in as that user
+and run the same installer with `sudo bash` at the end of the pipe. Setup offers
+to reuse the account or create another one, and checks its SSH key and sudo access.
+
 To inspect prompts and summary without changing the server:
 
 ```bash
@@ -37,6 +41,17 @@ curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.s
 
 `--continue` is an alias for `--resume`.
 
+After bootstrap, log in as the chosen admin and install optional developer tools
+without sudo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh |
+  bash -s -- --dev-tools
+```
+
+This offers mise, Ruby, Rails, and Node.js/npm. See the
+[operator guide](documentation/README.md) for versions, retries, and sudo behavior.
+
 The installer asks for every operator choice: admin user, SSH public key,
 optional hostname, swap, public web ports, a numbered developer CLI selection
 (Codex, Grok, GitHub CLI, Pi, OpenCode, Amp, Factory Droid, or Claude Code),
@@ -50,7 +65,7 @@ User-scoped upstream CLI installers run as the chosen admin user. GitHub CLI and
 
 1. Prepare the user, key, packages, Tailscale, swap, helpers, and firewall while
    public SSH stays open. Disable Tailscale SSH so OpenSSH handles Tailnet port 22.
-2. Check the new admin user's sudo helper on the server.
+2. Check the selected admin user's sudo helper on the server.
 3. Wait while you test a fresh `ssh <admin>@<tailscale-ip>` login from another
    terminal through OpenSSH.
 4. Harden SSH and remove public TCP 22 only after you type `yes`.
@@ -67,7 +82,7 @@ official retry command at the end.
 - The host firewall denies other inbound traffic.
 - Public TCP 80/443 follow the choice made during setup.
 - The admin user gets passwordless access to root-owned `vpsbuddy-*` helpers
-  unless full sudo was chosen.
+  unless full sudo was chosen. Existing provider sudo grants are preserved.
 - `/swapfile` is created only when requested and no swap is active.
 - `vpsbuddy-os-update.timer` is installed only when automatic OS updates are
   selected.

@@ -1,5 +1,14 @@
 # Upstream References
 
+## Optional Developer Tools
+
+- Mise install and shell activation: https://mise.jdx.dev/getting-started
+- Ruby runtime and build notes: https://mise.jdx.dev/lang/ruby.html
+- Node.js and bundled npm: https://mise.jdx.dev/lang/node.html
+- Rails install: https://guides.rubyonrails.org/install_ruby_on_rails.html
+- Runtime defaults use `mise use --global`; Rails uses the selected Ruby's
+  `gem install rails --no-document`. All run as the logged-in admin.
+
 ## Codex CLI
 
 - https://developers.openai.com/codex/cli

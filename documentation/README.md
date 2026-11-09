@@ -12,15 +12,33 @@ From a checkout on the VPS:
 sudo bin/vpsbuddy
 ```
 
+For a provider admin such as `ubuntu`, run the download with root privileges:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh |
+  sudo bash
+```
+
 Use `--dry-run` to answer the same prompts and print the chosen configuration
 without changing the host.
 
-## SSH Key Input
+## Existing Admin Accounts and SSH Keys
 
-When the current login account has a valid key in `~/.ssh/authorized_keys`, the
-script shows its fingerprint and asks whether to install that key for the new
-admin user. Otherwise paste one OpenSSH public key. The script never asks for a
-private key.
+Setup offers the non-root sudo caller first, followed by local interactive
+accounts with admin-group membership or sudo access. Accept an account, decline
+it to see the next one, or enter an existing or new name after declining the
+detected accounts. A new user is created only when the selected name is absent.
+
+For an existing user, setup reports a passwordless sudo probe and lists its sudo
+grants. It checks the selected user's `~/.ssh/authorized_keys` first, then the
+invoking account's key file. It shows a detected key's fingerprint and asks
+before using it. Otherwise paste one OpenSSH public key. Discovery accepts only
+plain unrestricted key lines; it does not strip options from restricted keys.
+Existing keys remain in place. The script never asks for a private key.
+
+Prepare checks the selected home and SSH paths, sets `.ssh` to `0700` and
+`authorized_keys` to `0600`, and uses the account's actual primary group. It
+refuses symlinked homes or SSH paths and non-regular key files.
 
 ## Swap
 
@@ -37,7 +55,7 @@ Prepare checks or updates the chosen user, key, packages, swap, services,
 Tailscale, helpers, CLIs, and firewall rules while keeping public SSH open. It
 disables Tailscale SSH before the OpenSSH login test.
 
-After prepare, the script runs the scoped sudo check as the new admin user,
+After prepare, the script runs the scoped sudo check as the selected admin user,
 prints the Tailnet SSH command, and waits. Test that login from another
 terminal, return to the first session, and type `yes`.
 
@@ -49,6 +67,12 @@ If you do not confirm, setup pauses with public SSH open. Rerun with
 `--resume`; vpsbuddy loads the saved choices, restores public SSH, disables
 Tailscale SSH, checks the admin and Tailnet state again, and waits
 for a new explicit confirmation before hardening.
+
+Prepare, resumed access preparation, and harden report effective root SSH
+settings, root password status, and the selected user's sudo grants. The SSH
+report uses a loopback connection context. Harden still validates the effective
+key-only admin policy and `PermitRootLogin no` before closing public SSH. Root
+console/password state is reported and preserved for provider recovery.
 
 ## Developer CLIs
 
@@ -88,8 +112,58 @@ Scoped sudo grants passwordless access only to root-owned `vpsbuddy-*` helpers
 under `/usr/local/sbin`. Those helpers wrap package, service, log, firewall, and
 update operations. Full sudo writes `NOPASSWD:ALL`.
 
+Existing provider sudoers files and group grants remain in effect. Selecting
+scoped helpers controls only vpsbuddy's grant; it does not revoke pre-existing
+full sudo. Setup displays those grants so you can assess the effective access.
+The prepare gate verifies passwordless helper access for both policies, and
+also tests passwordless `/usr/bin/true` when full sudo was selected.
+These checks ignore cached sudo authentication.
+
 Helper calls write best-effort JSONL audit events to
 `/var/log/vpsbuddy-actions.log`.
+
+## Optional Developer Tools After Bootstrap
+
+Log in as the chosen admin. From a checkout, run:
+
+```bash
+bin/vpsbuddy --dev-tools
+```
+
+Or download the current installer without a checkout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh |
+  bash -s -- --dev-tools
+```
+
+Run this without sudo. It rejects root, and requires access to the installed
+vpsbuddy sudo helper before installing. It never loads the private bootstrap
+plan or runs SSH, firewall, Tailscale, user, or sudo-policy setup. Host recovery
+remains a separate command: `sudo bin/vpsbuddy --resume` from a checkout, or
+pipe the downloaded installer to `sudo bash -s -- --resume`.
+
+Choose numbers or names for mise, Ruby, Rails, and Node.js/npm; `all` and `none`
+are supported. Rails includes Ruby, and runtimes include mise. Choose a numeric
+Ruby version or `latest`, a numeric Rails version or `latest`, and a numeric
+Node.js version or `lts`. Mise accepts version prefixes for Ruby and Node;
+Rails versions are passed directly to RubyGems. No versions are silently chosen.
+`latest` and `lts` resolve at install time and may change on a later rerun.
+The summary requires confirmation. Add `--dry-run` to preview without installing.
+
+Mise is installed through its official installer at `~/.local/bin/mise` if absent.
+An existing binary there is reused. Ruby, Rails gems, Node, and npm are installed
+as the current user. Ruby build prerequisites use `sudo -n vpsbuddy-package` on
+supported apt/rpm distributions; no full sudo grant is required. RPM package
+availability depends on the image's enabled repositories. No OS Node/Ruby package
+or root-owned gem install is used.
+
+The command verifies tool versions and adds mise activation to `.bashrc`, plus
+the current Zsh configuration when applicable, without duplicating its line.
+Open a new shell afterward. On failure, rerun `--dev-tools` and select the tools
+to retry; existing mise installations are reused. Tool selection is collected
+again, while installed runtime state is managed by mise. Deselecting a tool does
+not uninstall it. Developer-tool failures do not change host hardening.
 
 ## Reruns and Resume
 

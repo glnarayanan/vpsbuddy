@@ -16,6 +16,7 @@ reset_config() {
   VPS_FULL_SUDO=""
   VPS_DRY_RUN="0"
   VPS_RESUME="0"
+  VPS_DEV_TOOLS="0"
   VPS_SHOW_HELP="0"
   VPS_STATE_DIR="${VPSBUDDY_STATE_DIR:-/var/lib/vpsbuddy}"
   VPS_FAILED_CLIS=""
@@ -33,6 +34,7 @@ usage() {
 Usage:
   sudo vpsbuddy [--dry-run]
   sudo vpsbuddy --resume
+  vpsbuddy --dev-tools [--dry-run]
 
 Run this command after logging into the VPS. The guided setup asks for:
   - the admin user name
@@ -49,9 +51,10 @@ Options:
   --dry-run          Collect and print the configuration without changing the server.
   --resume           Continue a saved or partial setup on this VPS.
   --continue         Alias for --resume.
+  --dev-tools        Install mise, Ruby, Rails, or Node.js/npm as the logged-in user.
   -h, --help         Show this help.
 
-The prepare phase keeps public SSH open. After it completes, test the new admin
+The prepare phase keeps public SSH open. After it completes, test the selected admin
 login over the Tailnet from another terminal. The script only disables public
 SSH after you type yes to confirm that test passed.
 USAGE
@@ -65,6 +68,9 @@ parse_args() {
         ;;
       --resume | --continue)
         VPS_RESUME="1"
+        ;;
+      --dev-tools)
+        VPS_DEV_TOOLS="1"
         ;;
       -h | --help)
         VPS_SHOW_HELP="1"
@@ -288,6 +294,77 @@ validate_admin_user() {
     error "admin user must match ^[a-z_][a-z0-9_-]{0,31}$"
     return 1
   fi
+
+  if [[ "$(id -u "$user" 2> /dev/null || true)" == "0" ]]; then
+    error "managed admin user must not have UID 0"
+    return 1
+  fi
+}
+
+discover_admin_users() {
+  local name uid groups shell seen=" "
+
+  # Prefer the sudo caller, then local interactive accounts in admin groups.
+  # Resolve the caller by UID rather than trusting SUDO_USER as an account name.
+  if [[ "${SUDO_UID:-}" =~ ^[0-9]+$ ]]; then
+    while IFS=: read -r name _ uid _ _ _ shell; do
+      [[ "$uid" == "$SUDO_UID" && "$uid" -ne 0 ]] || continue
+      validate_admin_user "$name" 2> /dev/null || continue
+      case "$shell" in
+        */nologin | */false | "") continue ;;
+      esac
+      printf '%s\n' "$name"
+      seen="$seen$name "
+    done < /etc/passwd
+  fi
+
+  while IFS=: read -r name _ uid _ _ _ shell; do
+    [[ "$uid" =~ ^[0-9]+$ && "$uid" -ge 1000 && "$uid" -lt 65534 ]] || continue
+    [[ "$seen" != *" $name "* ]] || continue
+    validate_admin_user "$name" 2> /dev/null || continue
+    case "$shell" in
+      */nologin | */false | "") continue ;;
+    esac
+    groups=" $(id -nG "$name" 2> /dev/null || true) "
+    if [[ "$groups" == *" sudo "* || "$groups" == *" wheel "* ]] ||
+      sudo -n -l -U "$name" > /dev/null 2>&1; then
+      printf '%s\n' "$name"
+    fi
+  done < /etc/passwd
+}
+
+inspect_admin_access() {
+  local user="$1"
+
+  id "$user" > /dev/null 2>&1 || return 0
+  printf '[vpsbuddy] Existing account: %s\n' "$user" >&2
+  if sudo -n -H -u "$user" sudo -n -k /usr/bin/true > /dev/null 2>&1; then
+    printf '[vpsbuddy] Passwordless sudo for /usr/bin/true: available.\n' >&2
+  else
+    printf '[vpsbuddy] Passwordless sudo for /usr/bin/true: unavailable; prepare will configure the chosen policy.\n' >&2
+  fi
+  sudo -n -l -U "$user" >&2 2> /dev/null || true
+  printf '[vpsbuddy] Existing provider/group sudo grants are kept. Scoped helpers do not revoke those grants.\n' >&2
+}
+
+collect_admin_user() {
+  local candidate answer
+
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    answer="$(prompt_yes_no "Use existing admin user $candidate instead of creating another user")" || return 1
+    if [[ "$answer" == "1" ]]; then
+      VPS_ADMIN_USER="$candidate"
+      inspect_admin_access "$VPS_ADMIN_USER"
+      return 0
+    fi
+  done < <(discover_admin_users)
+
+  while true; do
+    VPS_ADMIN_USER="$(prompt_required "Admin user name (existing or new)")" || return 1
+    validate_admin_user "$VPS_ADMIN_USER" && break
+  done
+  inspect_admin_access "$VPS_ADMIN_USER"
 }
 
 validate_hostname() {
@@ -364,7 +441,7 @@ login_home() {
 detect_existing_public_key() {
   local home_dir authorized_keys
 
-  home_dir="$(login_home)"
+  home_dir="${1:-$(login_home)}"
   [[ -n "$home_dir" ]] || return 1
   authorized_keys="$home_dir/.ssh/authorized_keys"
   [[ -f "$authorized_keys" && -r "$authorized_keys" ]] || return 1
@@ -377,6 +454,13 @@ detect_existing_public_key() {
   ' "$authorized_keys"
 }
 
+detect_admin_public_key() {
+  local home_dir
+  home_dir="$(awk -F: -v user="$VPS_ADMIN_USER" '$1 == user { print $6; exit }' /etc/passwd)"
+  [[ -n "$home_dir" ]] || return 1
+  detect_existing_public_key "$home_dir"
+}
+
 has_active_swap() {
   [[ -r /proc/swaps ]] || return 1
   awk 'NR > 1 && $1 != "" { found = 1 } END { exit(found ? 0 : 1) }' /proc/swaps
@@ -385,11 +469,14 @@ has_active_swap() {
 collect_public_key() {
   local detected_key use_detected_key entered_key
 
-  detected_key="$(detect_existing_public_key || true)"
+  detected_key="$(detect_admin_public_key || true)"
+  if [[ -z "$detected_key" ]]; then
+    detected_key="$(detect_existing_public_key || true)"
+  fi
   if [[ -n "$detected_key" ]] && validate_public_key "$detected_key"; then
-    printf '[vpsbuddy] Found the SSH key used by the current login: %s\n' \
+    printf '[vpsbuddy] Found an SSH public key in the selected admin or login account: %s\n' \
       "$(public_key_fingerprint "$detected_key")" >&2
-    use_detected_key="$(prompt_yes_no "Install this key for the new admin user")" || return 1
+    use_detected_key="$(prompt_yes_no "Use this key for the selected admin user")" || return 1
     if [[ "$use_detected_key" == "1" ]]; then
       VPS_PUBLIC_KEY="$detected_key"
       return 0
@@ -438,11 +525,7 @@ collect_swap_configuration() {
 }
 
 collect_configuration() {
-  while true; do
-    VPS_ADMIN_USER="$(prompt_required "Admin user name")" || return 1
-    validate_admin_user "$VPS_ADMIN_USER" && break
-  done
-
+  collect_admin_user || return 1
   collect_public_key || return 1
 
   while true; do
@@ -471,6 +554,7 @@ Configuration:
   Automatic OS updates: $([[ "$VPS_AUTOMATIC_UPDATES" == "1" ]] && printf 'enable' || printf 'disable bootstrap timer')
   Sudo policy: $([[ "$VPS_FULL_SUDO" == "1" ]] && printf 'full passwordless sudo' || printf 'scoped helpers')
   Tailnet SSH: OpenSSH (Tailscale SSH disabled)
+  Existing provider/group sudo grants: preserved; scoped helpers do not revoke them
 SUMMARY
 }
 
@@ -2476,7 +2560,7 @@ print_selected_cli_versions() {
 }
 
 ensure_admin_user() {
-  local home_dir
+  local home_dir primary_group
 
   if ! getent passwd "$admin_user" >/dev/null 2>&1; then
     log "creating admin user: $admin_user"
@@ -2487,20 +2571,34 @@ ensure_admin_user() {
 
   usermod -aG "$SUDO_GROUP" "$admin_user"
   home_dir="$(getent passwd "$admin_user" | cut -d: -f6)"
+  primary_group="$(id -gn "$admin_user")"
+  [[ "$home_dir" == /* && "$home_dir" != / && -d "$home_dir" && ! -L "$home_dir" ]] ||
+    fail "admin home must be an existing absolute directory, not / or a symlink"
+  [[ "$(stat -c '%u' "$home_dir")" == "$(id -u "$admin_user")" ]] ||
+    fail "admin home must belong to the selected user"
+  [[ ! -L "$home_dir/.ssh" && ! -L "$home_dir/.ssh/authorized_keys" ]] ||
+    fail "refusing a symlink in the admin SSH key path"
+  if [[ -e "$home_dir/.ssh/authorized_keys" && ! -f "$home_dir/.ssh/authorized_keys" ]]; then
+    fail "admin authorized_keys must be a regular file"
+  fi
 
-  install -d -m 700 -o "$admin_user" -g "$admin_user" "$home_dir/.ssh"
+  install -d -m 700 -o "$admin_user" -g "$primary_group" "$home_dir/.ssh"
   touch "$home_dir/.ssh/authorized_keys"
-  chown "$admin_user:$admin_user" "$home_dir/.ssh/authorized_keys"
+  chown "$admin_user:$primary_group" "$home_dir/.ssh/authorized_keys"
   chmod 600 "$home_dir/.ssh/authorized_keys"
 
-  if ! grep -qxF "$public_key" "$home_dir/.ssh/authorized_keys"; then
+  if ! awk -v key="$public_key" '
+    BEGIN { split(key, parts, " ") }
+    $1 == parts[1] && $2 == parts[2] { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$home_dir/.ssh/authorized_keys"; then
     log "installing public key for $admin_user"
     printf '%s\n' "$public_key" >>"$home_dir/.ssh/authorized_keys"
   else
     log "public key already present for $admin_user"
   fi
 
-  chown "$admin_user:$admin_user" "$home_dir/.ssh/authorized_keys"
+  chown "$admin_user:$primary_group" "$home_dir/.ssh/authorized_keys"
   chmod 600 "$home_dir/.ssh/authorized_keys"
 
   write_sudoers_policy "$full_sudo"
@@ -2648,6 +2746,18 @@ validate_effective_sshd_hardening() {
   grep -qxF "permitrootlogin no" <<<"$effective_root"
 }
 
+report_access_state() {
+  local root_policy
+
+  log "current root SSH policy (loopback connection context):"
+  root_policy="$(sshd -T -C "user=root,host=$(hostname),addr=127.0.0.1")" || return 1
+  printf '%s\n' "$root_policy" | grep -E '^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication) '
+  log "root password status (L/locked, P/password set, NP/no password; console access is unchanged):"
+  passwd -S root || return 1
+  log "effective sudo grants for $admin_user (including provider grants):"
+  sudo -n -l -U "$admin_user" || return 1
+}
+
 write_sshd_hardening() {
   local snippet include_backup legacy_snippet backup current_backup validation_error index
   local -a legacy_backups=()
@@ -2765,6 +2875,7 @@ run_prepare() {
   configure_firewall prepare
   disable_tailscale_ssh_for_verification
   validate_prepare_state
+  report_access_state
   install_selected_clis
 
   printf 'VPSBUDDY_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
@@ -2779,6 +2890,7 @@ run_prepare_access() {
   ensure_tailscale_connected
   configure_firewall prepare
   disable_tailscale_ssh_for_verification
+  report_access_state
   log "public SSH is available while you verify OpenSSH over the Tailnet"
 }
 
@@ -2792,6 +2904,7 @@ run_harden() {
   install_agent_sudo_helpers
   write_sshd_hardening
   write_sudoers_policy "$full_sudo"
+  report_access_state
   configure_firewall harden
 
   printf 'VPSBUDDY_TAILSCALE_IP=%s\n' "$TAILSCALE_IP"
@@ -2861,7 +2974,10 @@ tailnet_ipv4() {
 }
 
 verify_prepared_admin() {
-  sudo -H -u "$VPS_ADMIN_USER" sudo -n /usr/local/sbin/vpsbuddy-sudo-check
+  sudo -H -u "$VPS_ADMIN_USER" sudo -n -k /usr/local/sbin/vpsbuddy-sudo-check || return 1
+  if [[ "$VPS_FULL_SUDO" == "1" ]]; then
+    sudo -H -u "$VPS_ADMIN_USER" sudo -n -k /usr/bin/true || return 1
+  fi
 }
 
 confirm_tailnet_login() {
@@ -2920,6 +3036,192 @@ After retrying, run vpsbuddy-auth --status. You do not need to rebuild the VPS.
 FAILED_FOOT
 }
 
+prompt_dev_tools() {
+  local answer token wanted normalized
+  local -a tokens
+
+  cat >&2 << 'TOOLS'
+[vpsbuddy] Optional developer tools:
+  1. mise
+  2. Ruby (includes mise)
+  3. Rails (includes Ruby and mise)
+  4. Node.js and npm (includes mise)
+TOOLS
+  while true; do
+    answer="$(prompt_required "Select numbers or names, separated by spaces/commas; all or none")" || return 1
+    wanted=" "
+    normalized=""
+    read -r -a tokens <<< "${answer//,/ }"
+    for token in "${tokens[@]}"; do
+      case "$token" in
+        1 | mise) wanted="${wanted}mise " ;;
+        2 | ruby) wanted="${wanted}mise ruby " ;;
+        3 | rails) wanted="${wanted}mise ruby rails " ;;
+        4 | node | nodejs | npm) wanted="${wanted}mise node " ;;
+        all) wanted="${wanted}mise ruby rails node " ;;
+        none) wanted="${wanted}none " ;;
+        *)
+          wanted="invalid"
+          break
+          ;;
+      esac
+    done
+    if [[ "${#tokens[@]}" -eq 1 && "${tokens[0]}" == "none" ]]; then
+      return 0
+    fi
+    if [[ "$wanted" == "invalid" || "$wanted" == *" none "* || "$wanted" == " " ]]; then
+      error "choose mise, ruby, rails, node/npm, all, or none"
+      continue
+    fi
+    for token in mise ruby rails node; do
+      if [[ "$wanted" == *" $token "* ]]; then
+        normalized="${normalized:+$normalized }$token"
+      fi
+    done
+    printf '%s' "$normalized"
+    return 0
+  done
+}
+
+prompt_tool_version() {
+  local tool="$1" alias="$2" version
+
+  while true; do
+    version="$(prompt_required "$tool version (a version number or $alias)")" || return 1
+    if [[ "$version" == "$alias" || "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+      printf '%s' "$version"
+      return 0
+    fi
+    error "enter a version number or $alias"
+  done
+}
+
+install_ruby_build_packages() {
+  local os_id
+  # shellcheck disable=SC1091
+  os_id="$(
+    . /etc/os-release
+    printf '%s' "$ID"
+  )"
+
+  case "$os_id" in
+    ubuntu | debian)
+      sudo -n /usr/local/sbin/vpsbuddy-package install \
+        build-essential autoconf patch pkg-config git curl libssl-dev \
+        libyaml-dev zlib1g-dev libgmp-dev libreadline-dev libffi-dev libsqlite3-dev
+      ;;
+    fedora | rhel | centos | rocky | almalinux | ol)
+      sudo -n /usr/local/sbin/vpsbuddy-package install \
+        gcc gcc-c++ make autoconf patch pkgconf-pkg-config git curl \
+        openssl-devel libyaml-devel zlib-devel gmp-devel readline-devel libffi-devel sqlite-devel
+      ;;
+    *)
+      error "Ruby build packages are not configured for $os_id"
+      return 1
+      ;;
+  esac
+}
+
+install_user_dev_tools() {
+  local selection="$1" ruby_version="$2" node_version="$3" rails_version="$4"
+  local mise="$HOME/.local/bin/mise" installer activation
+
+  # A known directory avoids reading or trusting a project's mise configuration.
+  cd "$HOME" || return 1
+  if [[ " $selection " == *" ruby "* ]]; then
+    install_ruby_build_packages || return 1
+  fi
+  if [[ ! -x "$mise" ]]; then
+    installer="$(mktemp "${TMPDIR:-/tmp}/vpsbuddy-mise.XXXXXX")" || return 1
+    if ! curl -fsSL --connect-timeout 15 --max-time 120 https://mise.run -o "$installer"; then
+      rm -f "$installer"
+      return 1
+    fi
+    if ! sh "$installer"; then
+      rm -f "$installer"
+      return 1
+    fi
+    rm -f "$installer"
+  fi
+  "$mise" --version || return 1
+  if [[ " $selection " == *" ruby "* ]]; then
+    "$mise" use --global "ruby@$ruby_version" || return 1
+    "$mise" exec "ruby@$ruby_version" -- ruby --version || return 1
+  fi
+  if [[ " $selection " == *" rails "* ]]; then
+    if [[ "$rails_version" == "latest" ]]; then
+      "$mise" exec "ruby@$ruby_version" -- gem install rails --no-document || return 1
+    else
+      "$mise" exec "ruby@$ruby_version" -- gem install rails --version "$rails_version" --no-document || return 1
+    fi
+    "$mise" exec "ruby@$ruby_version" -- rails --version || return 1
+    "$mise" reshim || return 1
+  fi
+  if [[ " $selection " == *" node "* ]]; then
+    "$mise" use --global "node@$node_version" || return 1
+    "$mise" exec "node@$node_version" -- node --version || return 1
+    "$mise" exec "node@$node_version" -- npm --version || return 1
+  fi
+  # Keep the activation command literal in the user's shell configuration.
+  # shellcheck disable=SC2016
+  activation='eval "$(~/.local/bin/mise activate bash)"'
+  if ! grep -qxF "$activation" "$HOME/.bashrc" 2> /dev/null; then
+    printf '\n%s\n' "$activation" >> "$HOME/.bashrc" || return 1
+  fi
+  if [[ "${SHELL:-}" == */zsh ]]; then
+    # shellcheck disable=SC2016
+    activation='eval "$(~/.local/bin/mise activate zsh)"'
+    if ! grep -qxF "$activation" "${ZDOTDIR:-$HOME}/.zshrc" 2> /dev/null; then
+      printf '\n%s\n' "$activation" >> "${ZDOTDIR:-$HOME}/.zshrc" || return 1
+    fi
+  fi
+}
+
+run_dev_tools() {
+  local selection ruby_version="" node_version="" rails_version="" confirmed
+
+  if [[ "$VPS_RESUME" == "1" ]]; then
+    error "--dev-tools and --resume cannot be used together; use sudo for host resume"
+    return 1
+  fi
+  if [[ "$(id -u)" -eq 0 ]]; then
+    error "run --dev-tools from the admin login without sudo; tools belong in that user's home"
+    return 1
+  fi
+  selection="$(prompt_dev_tools)" || return 1
+  [[ -n "$selection" ]] || {
+    printf 'No developer tools selected.\n'
+    return 0
+  }
+  if [[ " $selection " == *" ruby "* ]]; then
+    ruby_version="$(prompt_tool_version Ruby latest)" || return 1
+  fi
+  if [[ " $selection " == *" rails "* ]]; then
+    rails_version="$(prompt_tool_version Rails latest)" || return 1
+  fi
+  if [[ " $selection " == *" node "* ]]; then
+    node_version="$(prompt_tool_version Node.js lts)" || return 1
+  fi
+  printf '\nDeveloper tools for %s in %s: %s\nRuby: %s; Rails: %s; Node.js/npm: %s\n' \
+    "$(id -un)" "$HOME" "$selection" "${ruby_version:-skip}" "${rails_version:-skip}" "${node_version:-skip}"
+  printf 'Uses the official mise installer and upstream runtime/gem downloads. Ruby requires OS build packages through the vpsbuddy sudo helper.\n'
+  if [[ "$VPS_DRY_RUN" == "1" ]]; then
+    printf 'Dry run complete; no developer tools were installed.\n'
+    return 0
+  fi
+  confirmed="$(prompt_yes_no "Install these developer tools for the current user")" || return 1
+  [[ "$confirmed" == "1" ]] || return 0
+  if ! sudo -n -k /usr/local/sbin/vpsbuddy-sudo-check; then
+    error "vpsbuddy helper access is required; finish host bootstrap with sudo and log in as the selected admin"
+    return 1
+  fi
+  if ! install_user_dev_tools "$selection" "$ruby_version" "$node_version" "$rails_version"; then
+    error "developer tool installation failed; rerun --dev-tools to retry. Host hardening was not changed"
+    return 1
+  fi
+  printf 'Developer tools installed. Open a new shell to activate mise. Rerun --dev-tools to add or retry tools.\n'
+}
+
 print_completion_summary() {
   local tailnet_ip="$1"
 
@@ -2936,6 +3238,10 @@ Public inbound policy:
   - TCP 80/443: $([[ "$VPS_WEB" == "1" ]] && printf 'public' || printf 'closed')
 
 Mirror this policy in the VPS provider firewall.
+
+To install mise, Ruby, Rails, or Node.js/npm later, log in as $VPS_ADMIN_USER
+and run without sudo:
+  curl -fsSL https://raw.githubusercontent.com/glnarayanan/vpsbuddy/main/install.sh | bash -s -- --dev-tools
 SUMMARY
 
   if [[ -n "$VPS_SELECTED_CLIS" ]]; then
@@ -3028,7 +3334,7 @@ run_bootstrap() {
   fi
 
   if ! verify_prepared_admin; then
-    error "the new admin user failed the local sudo check; public SSH remains open"
+    error "the selected admin user failed the local sudo check; public SSH remains open"
     return 1
   fi
 
@@ -3051,5 +3357,9 @@ main() {
     return 0
   fi
 
-  run_bootstrap
+  if [[ "$VPS_DEV_TOOLS" == "1" ]]; then
+    run_dev_tools
+  else
+    run_bootstrap
+  fi
 }

@@ -1619,6 +1619,7 @@ test_guided_dry_run_captures_operator_configuration() {
     bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      discover_admin_users() { :; }
       exec 3<<<$'"'"'deploy\nyes\n\n4G\nyes\n1, 3, 8\nyes\nno\nno\n'"'"'
       VPS_INPUT_FD=3
       detect_existing_public_key() {
@@ -1651,6 +1652,7 @@ test_fallback_key_and_no_swap_are_captured() {
     TEST_PUBLIC_KEY="$public_key" bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      discover_admin_users() { :; }
       exec 3<<<"deploy
 ${TEST_PUBLIC_KEY}
 
@@ -1736,6 +1738,7 @@ test_non_regular_authorized_keys_does_not_block_recovery() {
     TEST_KEY_HOME="$key_home" TEST_PUBLIC_KEY="$public_key" "$timeout_bin" 2 bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      discover_admin_users() { :; }
       exec 3<<<"ubuntu
 ${TEST_PUBLIC_KEY}
 
@@ -1771,6 +1774,7 @@ run_stubbed_bootstrap() {
   TEST_CONFIRMATION="$confirmation" TEST_PUBLIC_KEY="$public_key" bash -c '
     set -Eeuo pipefail
     source lib/vpsbuddy.sh
+    discover_admin_users() { :; }
     exec 3<<<"deploy
 yes
 
@@ -1826,6 +1830,7 @@ test_prepare_installer_failure_still_reaches_hardening() {
     bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      discover_admin_users() { :; }
       VPS_STATE_DIR="$TEST_STATE"
       exec 3<<<"deploy
 yes
@@ -1918,6 +1923,7 @@ yes"
           configure_firewall() {
             :
           }
+          report_access_state() { :; }
           validate_prepare_state() {
             :
           }
@@ -1964,6 +1970,7 @@ test_server_phase_cleanup_does_not_leak_return_trap() {
     bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      discover_admin_users() { :; }
       generate_server_config_prelude() {
         printf "phase=%q\n" "$1"
       }
@@ -2165,6 +2172,7 @@ run_saved_resume_phase() {
     TEST_PUBLIC_KEY="$public_key" VPSBUDDY_STATE_DIR="$state_dir" bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      discover_admin_users() { :; }
       reset_config
       VPS_ADMIN_USER=deploy
       VPS_PUBLIC_KEY="$TEST_PUBLIC_KEY"
@@ -2238,6 +2246,7 @@ test_resume_without_saved_plan_starts_guided_recovery() {
     TEST_PUBLIC_KEY="$public_key" VPSBUDDY_STATE_DIR="$state_dir" bash -c '
       set -Eeuo pipefail
       source lib/vpsbuddy.sh
+      discover_admin_users() { :; }
       collect_configuration() {
         VPS_ADMIN_USER=deploy
         VPS_PUBLIC_KEY="$TEST_PUBLIC_KEY"
@@ -2341,6 +2350,13 @@ test_checkout_free_installer_executes_downloaded_bundle() {
         cp "$TEST_REPO_ROOT/lib/vpsbuddy.sh" "$bundle_dir/repository/lib/vpsbuddy.sh"
         cp "$TEST_REPO_ROOT/lib/templates/vpsbuddy-audit-prelude.sh" "$bundle_dir/repository/lib/templates/vpsbuddy-audit-prelude.sh"
         cp "$TEST_REPO_ROOT/lib/templates/vpsbuddy-auth.sh" "$bundle_dir/repository/lib/templates/vpsbuddy-auth.sh"
+        # Keep guided answers independent of accounts and keys on the test host.
+        # Account/key discovery has separate fixture-based coverage.
+        cat >> "$bundle_dir/repository/lib/vpsbuddy.sh" << "TEST_DISCOVERY"
+discover_admin_users() { :; }
+detect_admin_public_key() { return 1; }
+detect_existing_public_key() { return 1; }
+TEST_DISCOVERY
         tar -czf "$archive_path" -C "$bundle_dir" repository
         rm -rf "$bundle_dir"
       }
@@ -2471,6 +2487,276 @@ test_server_config_prelude_carries_every_choice() {
   assert_contains "phase prelude carries update choice" "$prelude" "automatic_updates=1"
 }
 
+test_existing_admin_choice() {
+  local output
+  output="$(
+    discover_admin_users() { printf 'ubuntu\nops\n'; }
+    inspect_admin_access() { printf 'inspected:%s\n' "$1"; }
+    exec 3<<< $'yes\n'
+    VPS_INPUT_FD=3
+    collect_admin_user
+    printf 'chosen:%s\n' "$VPS_ADMIN_USER"
+  )"
+  assert_contains "provider admin can be reused" "$output" "chosen:ubuntu"
+  assert_contains "reused admin access is inspected" "$output" "inspected:ubuntu"
+
+  output="$(
+    discover_admin_users() { printf 'ubuntu\nops\n'; }
+    inspect_admin_access() { :; }
+    exec 3<<< $'no\nyes\n'
+    VPS_INPUT_FD=3
+    collect_admin_user
+    printf '%s' "$VPS_ADMIN_USER"
+  )"
+  assert_eq "another detected admin can be chosen" "ops" "$output"
+
+  output="$(
+    discover_admin_users() { printf 'ubuntu\n'; }
+    inspect_admin_access() { :; }
+    exec 3<<< $'no\ndeploy\n'
+    VPS_INPUT_FD=3
+    collect_admin_user
+    printf '%s' "$VPS_ADMIN_USER"
+  )"
+  assert_eq "provider admin can be declined for a new user" "deploy" "$output"
+}
+
+test_dev_tools_selection() {
+  local output
+  output="$(
+    exec 3<<< $'bad\n4,3,4\n'
+    VPS_INPUT_FD=3
+    prompt_dev_tools 2> /dev/null
+  )"
+  assert_eq "Rails and npm include their runtimes and mise" "mise ruby rails node" "$output"
+  output="$(
+    exec 3<<< 'none'
+    VPS_INPUT_FD=3
+    prompt_dev_tools
+  )"
+  assert_eq "optional tools can be skipped" "" "$output"
+  reset_config
+  parse_args --dev-tools --dry-run
+  assert_eq "dev-tools option is parsed" "1" "$VPS_DEV_TOOLS"
+}
+
+test_admin_discovery_and_selected_key() {
+  local fixture output key_home
+  fixture="$(mktemp /tmp/vpsbuddy-accounts.XXXXXX)"
+  key_home="$(mktemp -d /tmp/vpsbuddy-admin-key.XXXXXX)"
+  mkdir -p "$key_home/.ssh"
+  cp tests/fixtures/id_ed25519.pub "$key_home/.ssh/authorized_keys"
+  cat > "$fixture" << ACCOUNTS
+root:x:0:0:root:/root:/bin/bash
+root_alias:x:0:0:root:/root:/bin/bash
+ops:x:1001:1001:Ops:/home/ops:/bin/bash
+ubuntu:x:1000:100:Ubuntu:$key_home:/bin/bash
+service:x:1002:1002:Service:/home/service:/usr/sbin/nologin
+direct:x:1003:1003:Direct:/home/direct:/bin/bash
+ordinary:x:1004:1004:Ordinary:/home/ordinary:/bin/bash
+ACCOUNTS
+  output="$(
+    eval "$(declare -f discover_admin_users | sed "s|/etc/passwd|$fixture|g")"
+    SUDO_UID=1000
+    id() {
+      if [[ "$1:$2" == -u:ubuntu ]]; then
+        printf '1000\n'
+      elif [[ "$1:$2" == -u:root_alias ]]; then
+        printf '0\n'
+      elif [[ "$1" == -u ]]; then
+        printf '1001\n'
+      elif [[ "$2" == ops ]]; then
+        printf 'ops wheel\n'
+      else printf 'users\n'; fi
+    }
+    sudo() { [[ "$*" == '-n -l -U direct' ]]; }
+    discover_admin_users
+  )"
+  assert_eq "discovery prefers sudo caller, includes wheel and direct sudo, excludes services and UID 0" \
+    $'ubuntu\nops\ndirect' "$output"
+
+  output="$(
+    eval "$(declare -f detect_admin_public_key | sed "s|/etc/passwd|$fixture|g")"
+    VPS_ADMIN_USER=ubuntu
+    exec 3<<< 'yes'
+    VPS_INPUT_FD=3
+    collect_public_key
+    printf '%s\n' "$VPS_PUBLIC_KEY"
+  )"
+  assert_eq "selected provider user's key is reused" "$(awk '{print $1 " " $2}' tests/fixtures/id_ed25519.pub)" "$output"
+  rm -rf "$fixture" "$key_home"
+}
+
+# Variables and stubs below are consumed by the generated function under test.
+# shellcheck disable=SC2034,SC2329
+test_existing_admin_prepare() {
+  local key_home output script record
+  key_home="$(mktemp -d /tmp/vpsbuddy-reuse-home.XXXXXX)"
+  record="$(mktemp /tmp/vpsbuddy-reuse-record.XXXXXX)"
+  script="$(generate_server_script)"
+  mkdir -p "$key_home/.ssh"
+  printf '# provider entry retained\n' > "$key_home/.ssh/authorized_keys"
+  printf '%s provider-comment\n' "$(cat tests/fixtures/id_ed25519.pub)" >> "$key_home/.ssh/authorized_keys"
+  output="$(
+    eval "$(printf '%s\n' "$script" | sed -n '/^ensure_admin_user() {/,/^}/p')"
+    admin_user=ubuntu
+    public_key="$(cat tests/fixtures/id_ed25519.pub)"
+    SUDO_GROUP=sudo
+    full_sudo=0
+    getent() { printf 'ubuntu:x:1000:100:Ubuntu:%s:/bin/bash\n' "$key_home"; }
+    id() { if [[ "$1" == -gn ]]; then printf 'provider-group\n'; else printf '1000\n'; fi; }
+    stat() { printf '1000\n'; }
+    useradd() { printf 'useradd\n' >> "$record"; }
+    usermod() { :; }
+    install() {
+      mkdir -p "${@: -1}"
+      chmod 700 "${@: -1}"
+    }
+    chown() { printf '%s\n' "$1" >> "$record"; }
+    write_sudoers_policy() { :; }
+    log() { printf '%s\n' "$*"; }
+    fail() {
+      printf '%s\n' "$*"
+      exit 1
+    }
+    ensure_admin_user
+    ensure_admin_user
+    ln -s "$key_home/.ssh/authorized_keys" "$key_home/linked-key"
+    mv "$key_home/.ssh/authorized_keys" "$key_home/saved-key"
+    ln -s "$key_home/saved-key" "$key_home/.ssh/authorized_keys"
+    if (ensure_admin_user); then
+      printf 'unsafe-key-accepted\n'
+    else
+      printf 'unsafe-key-rejected\n'
+    fi
+  )"
+  assert_not_contains "reuse does not create a second user" "$(cat "$record")" 'useradd'
+  assert_contains "reuse respects the provider user's primary group" "$(cat "$record")" 'ubuntu:provider-group'
+  assert_contains "reuse retains provider key entries" "$(cat "$key_home/saved-key")" '# provider entry retained'
+  assert_contains "reuse retains the key comment" "$(cat "$key_home/saved-key")" 'provider-comment'
+  assert_eq "rerun does not duplicate the selected key" '1' "$(grep -c '^ssh-ed25519 ' "$key_home/saved-key")"
+  assert_contains "reuse refuses symlinked authorized_keys" "$output" 'unsafe-key-rejected'
+  assert_not_contains "symlinked key does not pass prepare" "$output" 'unsafe-key-accepted'
+  rm -rf "$key_home" "$record"
+}
+
+test_dev_tools_run_boundaries() {
+  local output
+  output="$(
+    id() { if [[ "$1" == -u ]]; then printf '1000\n'; else printf 'ubuntu\n'; fi; }
+    run_bootstrap() { printf 'unexpected-bootstrap\n'; }
+    sudo() { printf 'unexpected-sudo\n'; }
+    install_user_dev_tools() { printf 'unexpected-installer\n'; }
+    exec 3<<< $'all\n3.4\n8.1\nlts\n'
+    VPS_INPUT_FD=3
+    main --dev-tools --dry-run
+  )"
+  assert_contains "user-session dry-run includes selected versions" "$output" 'Ruby: 3.4; Rails: 8.1; Node.js/npm: lts'
+  assert_not_contains "user-session dry-run never changes host or installs" "$output" 'unexpected-'
+
+  output="$(
+    id() { printf '0\n'; }
+    main --dev-tools 2>&1 || true
+  )"
+  assert_contains "dev tools refuse to install into root's home" "$output" 'without sudo'
+  output="$(main --dev-tools --resume 2>&1 || true)"
+  assert_contains "host resume and dev tools cannot be mixed" "$output" 'cannot be used together'
+
+  output="$(
+    id() { if [[ "$1" == -u ]]; then printf '1000\n'; else printf 'ubuntu\n'; fi; }
+    sudo() { return 1; }
+    install_user_dev_tools() { printf 'unexpected-installer\n'; }
+    exec 3<<< $'mise\nyes\n'
+    VPS_INPUT_FD=3
+    main --dev-tools 2>&1 || true
+  )"
+  assert_contains "missing helper access gives recovery instructions" "$output" 'finish host bootstrap with sudo'
+  assert_not_contains "missing helper access prevents downloads" "$output" 'unexpected-installer'
+}
+
+test_user_dev_tools_install_and_retry() {
+  local tool_home record output
+  tool_home="$(mktemp -d /tmp/vpsbuddy-dev-home.XXXXXX)"
+  record="$tool_home/commands"
+  mkdir -p "$tool_home/.local/bin"
+  cat > "$tool_home/.local/bin/mise" << 'MISE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$VPSBUDDY_TEST_RECORD"
+if [[ "${VPSBUDDY_TEST_FAIL_NODE:-0}" == 1 && "$*" == 'use --global node@lts' ]]; then
+  exit 7
+fi
+MISE
+  chmod 700 "$tool_home/.local/bin/mise"
+  output="$(
+    export HOME="$tool_home" SHELL=/bin/bash VPSBUDDY_TEST_RECORD="$record"
+    install_ruby_build_packages() { printf 'build-packages\n' >> "$record"; }
+    curl() {
+      printf 'unexpected-download\n' >> "$record"
+      return 1
+    }
+    install_user_dev_tools 'mise ruby rails node' 3.4 lts 8.1
+    install_user_dev_tools 'mise ruby rails node' 3.4 lts 8.1
+    export VPSBUDDY_TEST_FAIL_NODE=1
+    if install_user_dev_tools 'mise node' '' lts ''; then
+      printf 'failure-masked\n'
+    else
+      printf 'failure-reported\n'
+    fi
+  )"
+  assert_contains "Ruby prereqs precede user runtime installation" "$(cat "$record")" 'build-packages'
+  assert_contains "user Ruby selected through mise" "$(cat "$record")" 'use --global ruby@3.4'
+  assert_contains "Rails installs in the selected Ruby" "$(cat "$record")" 'exec ruby@3.4 -- gem install rails --version 8.1 --no-document'
+  assert_contains "npm is verified with selected Node" "$(cat "$record")" 'exec node@lts -- npm --version'
+  assert_not_contains "existing mise is reused" "$(cat "$record")" 'unexpected-download'
+  assert_eq "shell activation is idempotent" '1' "$(grep -c 'mise activate bash' "$tool_home/.bashrc")"
+  assert_contains "runtime failure propagates for retry" "$output" 'failure-reported'
+  assert_not_contains "runtime failure is not masked" "$output" 'failure-masked'
+  rm -rf "$tool_home"
+}
+
+# The generated validator consumes these variables and the sshd stub.
+# shellcheck disable=SC2034,SC2329
+test_admin_sudo_gate_and_effective_root_policy() {
+  local output script
+  output="$(
+    VPS_ADMIN_USER=ubuntu
+    VPS_FULL_SUDO=1
+    sudo() { [[ "$*" == *'sudo -n -k '* && "$*" != *'/usr/bin/true'* ]]; }
+    if verify_prepared_admin; then printf 'unsafe-accepted\n'; else printf 'full-sudo-denied\n'; fi
+    VPS_FULL_SUDO=0
+    if verify_prepared_admin; then printf 'scoped-accepted\n'; fi
+  )"
+  assert_contains "full-sudo selection requires a successful passwordless probe" "$output" 'full-sudo-denied'
+  assert_contains "scoped selection requires only helper access" "$output" 'scoped-accepted'
+  assert_not_contains "denied full sudo does not pass the gate" "$output" 'unsafe-accepted'
+  script="$(generate_server_script)"
+  output="$(
+    eval "$(printf '%s\n' "$script" | sed -n '/^validate_effective_sshd_hardening() {/,/^}/p')"
+    admin_user=ubuntu
+    root_setting=yes
+    sshd() {
+      if [[ "$*" == *'user=root,'* ]]; then
+        printf 'permitrootlogin %s\n' "$root_setting"
+      else
+        printf 'pubkeyauthentication yes\npasswordauthentication no\nkbdinteractiveauthentication no\npermitemptypasswords no\n'
+      fi
+    }
+    if validate_effective_sshd_hardening; then printf 'unsafe-accepted\n'; else printf 'root-login-rejected\n'; fi
+    root_setting=no
+    if validate_effective_sshd_hardening; then printf 'hardened-accepted\n'; fi
+  )"
+  assert_contains "provider admin cannot pass hardening while root SSH is enabled" "$output" 'root-login-rejected'
+  assert_contains "provider admin can pass key-only/root-disabled policy" "$output" 'hardened-accepted'
+  assert_not_contains "root-login failure is not masked" "$output" 'unsafe-accepted'
+}
+
+test_existing_admin_choice
+test_dev_tools_selection
+test_admin_discovery_and_selected_key
+test_existing_admin_prepare
+test_dev_tools_run_boundaries
+test_user_dev_tools_install_and_retry
+test_admin_sudo_gate_and_effective_root_policy
 test_selected_cli_prompt_accepts_formats
 test_generated_selected_cli_behavior
 test_generated_missing_cli_selection_state
