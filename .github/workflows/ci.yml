@@ -65,7 +65,7 @@ jobs:
           node-version: "24"
 
       - name: Check GitHub Markdown and YAML formatting
-        run: npx --yes prettier@3.9.10 --check "**/*.{md,yml,yaml,json}"
+        run: npx --yes prettier@3.10.1 --check "**/*.{md,yml,yaml,json}"
 
   actionlint:
     name: actionlint
